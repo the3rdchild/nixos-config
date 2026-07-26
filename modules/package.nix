@@ -20,7 +20,11 @@
     obsidian
     discord
     steam
-    wireguard-ui
+    # wireguard-ui removed — was a server-side peer manager (overkill for one
+    # client tunnel) and its db/ under /etc/wireguard conflicted with wg-quick.
+    # The tunnel is now a plain NetworkManager connection, toggled from the
+    # Plasma network applet or `nmcli connection up wg0`.
+    wireguard-tools # keeps the `wg` CLI for inspecting NM-managed tunnels
     flatpak
     qdirstat
     cameractrls
@@ -28,6 +32,8 @@
     vscode
     localsend
     fanctl
+    cloudflare-warp
+    onboard
   ];
 
   programs.nix-ld.enable = true;

@@ -9,4 +9,17 @@
 
   # Enable networking
   networking.networkmanager.enable = true;
+
+  # FIX: Route NetworkManager DNS through systemd-resolved to prevent signature conflicts
+  networking.networkmanager.dns = "systemd-resolved";
+  services.resolved.enable = true;
+
+  # WireGuard is now managed by NetworkManager (toggle from the Plasma system-tray
+  # network applet, or `nmcli connection up wg0`). The connection profile is
+  # imported once from /etc/wireguard/wg0.conf — see README migration notes.
+  #
+  # This replaces the old `networking.wg-quick.interfaces.wg0` block, which
+  # conflicted with NetworkManager's interface lifecycle and left stale wg0
+  # devices behind on failed starts ("wg0 already exists"). NetworkManager owns
+  # the interface end-to-end, so restart/stop/start are all clean.
 }

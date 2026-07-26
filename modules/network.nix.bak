@@ -1,0 +1,26 @@
+{ config, pkgs, ... }:
+{
+  networking.hostName = "noouoops";
+  # networking.wireless.enable = true;  # Enables wireless support via wpa_supplicant.
+
+  # Configure network proxy if necessary
+  # networking.proxy.default = "http://user:password@proxy:port/";
+  # networking.proxy.noProxy = "127.0.0.1,localhost,internal.domain";
+
+  # Enable networking
+  networking.networkmanager.enable = true;
+
+  # FIX: Route NetworkManager DNS through systemd-resolved to prevent signature conflicts
+  networking.networkmanager.dns = "systemd-resolved";
+  services.resolved.enable = true;
+
+  # WireGuard Tunnels Configuration
+  networking.wg-quick.interfaces = {
+    # WireGuard UI managed interface
+    wg0 = {
+      configFile = "/etc/wireguard/wg0.conf";
+      # Prevents network conflicts if networkmanager handles the default route
+      autostart = true;
+    };
+  };
+}
