@@ -76,3 +76,4 @@ in
   # Make ntfs-3g helper discoverable for any ad-hoc manual mounts.
   environment.systemPackages = with pkgs; [ ntfs3g ];
 }
+
