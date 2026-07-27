@@ -13,6 +13,8 @@
   # FIX: Route NetworkManager DNS through systemd-resolved to prevent signature conflicts
   networking.networkmanager.dns = "systemd-resolved";
   services.resolved.enable = true;
+  networking.firewall.allowedTCPPorts = [ 4321 ];
+  networking.firewall.allowedUDPPorts = [ 4321 ];  # optional, untuk mDNS/SSDP discovery
 
   # WireGuard is now managed by NetworkManager (toggle from the Plasma system-tray
   # network applet, or `nmcli connection up wg0`). The connection profile is
