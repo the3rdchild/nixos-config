@@ -15,6 +15,7 @@
     ./user.nix
     ./docker.nix
     ./filesystems.nix
+    ./automount.nix
     ./acer-ec.nix
   ];
 }

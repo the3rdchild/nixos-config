@@ -1,1 +1,1 @@
-2.6-stable: stable and enhance network configuration with additional firewall rules 
+2.7-stable: auto-mount removable NTFS with udisks2 and ntfsfix udev rule 
