@@ -8,6 +8,8 @@
     ./kitty.nix
     ./hyprland-dots.nix
     ./onboard.nix
+    ./themes.nix
+    ./rofi-themes.nix
 
     # ./hyprland/default.nix and ./waybar.nix are intentionally NOT imported.
     #
