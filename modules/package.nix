@@ -9,10 +9,7 @@
   # Feral GameMode — used by Heroic Games Launcher and ProtonPlus (e.g. STRINOVA)
   # via `gamemoderun %command%`. Provides CPU/governor optimizations, GPU
   # performance mode, and D-Bus notifications while a game is running.
-  programs.gamemode = {
-    enable = true;
-    enableRenice = true; # allow gamemode to lower niceness (needs CAP_SYS_NICE)
-  };
+  programs.gamemode.enable = true;
 
   environment.systemPackages = with pkgs; [
     kitty
