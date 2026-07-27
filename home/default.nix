@@ -7,6 +7,7 @@
     ./starship.nix
     ./kitty.nix
     ./hyprland-dots.nix
+    ./onboard.nix
 
     # ./hyprland/default.nix and ./waybar.nix are intentionally NOT imported.
     #
