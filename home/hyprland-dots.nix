@@ -78,6 +78,7 @@ in {
     cava
 
     # Used throughout the dots' scripts
+    bc # WallpaperSelect.sh sizes its rofi grid with it; hard-fails without
     btop
     fastfetch
     yad
