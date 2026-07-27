@@ -26,8 +26,7 @@ let
     owner = "newmanls";
     repo = "rofi-themes-collection";
     rev = "911cc27afe9c66d7e2cb06a47c905d046ea3dfd2";  # master, Jul 2026
-    # `lib.fakeHash` makes the first build print the correct hash to paste back.
-    hash = lib.fakeHash;
+    hash = "sha256-YdsuzmpU/fokvF1/vKuiK/eOLFGfhJcFu8HvUIqx9Ao=";
   };
 
   # A derivation that lays out the themes the way rofi expects them on disk:
