@@ -51,6 +51,20 @@
   mutableConfigs = {
     "btop/btop.conf" = "${dots}/btop/btop.conf";
     "micro/settings.json" = "${dots}/micro/settings.json";
+
+    # nwg-displays keys its saved rules on port name by default, which is
+    # exactly wrong here: the TV and the projector are both HDMI-A-1, so a
+    # name-keyed rule would push the TV's 180Hz onto the projector. use-desc
+    # switches it to `desc:<edid description>` rules, matching what the Nexus
+    # Display page and the monitors.lua loader expect.
+    #
+    # Only this one key is seeded — nwg-displays fills the rest from its own
+    # defaults on first run (config_keys_missing in tools.py) and rewrites the
+    # whole file whenever you toggle something in its UI, which is why this is
+    # copy-once rather than a store symlink.
+    "nwg-displays/config" = pkgs.writeText "nwg-displays-config" (
+      builtins.toJSON { use-desc = true; }
+    );
   };
 
   # The `qs` CLI, which keybinds.lua uses to kill/restart the shell
@@ -68,9 +82,101 @@
       withX11 = false;
       withI3 = false;
     }).withModules [ pkgs.qt6.qtimageformats ];
+  # ── The shell, with a Display page added to nexus.
+  #
+  # Upstream stubbed this page out and never built it — PageRegistry.qml still
+  # carries the commented-out entry with a `// TODO` above it. Hyprland owns
+  # monitor config, so there was nowhere in the GUI to change a refresh rate.
+  #
+  # Patching this is much cheaper than it looks: CMakeLists.txt installs
+  # modules/, services/ and components/ with a plain `install(DIRECTORY ...)`
+  # and the wrapper runs `qs -p $out/share/caelestia-shell`. The QML is copied
+  # verbatim, not compiled — only plugin/ and extras/ are C++. So this adds
+  # files and rewrites two registries; nothing here triggers a C++ rebuild.
+  #
+  # The two registries are INDEX-ALIGNED: PageRegistry.pages[i] is the nav
+  # entry for PageCompRegistry.pageComps[i]. Both --replace-fail anchors are
+  # written to break loudly if upstream reorders the list, because a silent
+  # misalignment shows the right nav label over the wrong page.
+  shellSrc = pkgs.runCommand "caelestia-shell-src-display" { } ''
+    cp -r ${inputs.caelestia-shell} $out
+    chmod -R u+w $out
+
+    cp ${./caelestia/shell/services/Monitors.qml} $out/services/Monitors.qml
+    mkdir -p $out/modules/nexus/pages/display
+    cp ${./caelestia/shell/modules/nexus/pages/display}/*.qml \
+      $out/modules/nexus/pages/display/
+
+    # Uncomment the nav entry upstream left behind.
+    substituteInPlace $out/modules/nexus/PageRegistry.qml --replace-fail \
+      '        // Connectivity
+        // TODO
+        // {
+        //     label: qsTr("Display"),
+        //     icon: "monitor",
+        //     description: qsTr("Output configuration"),
+        //     category: "connectivity"
+        // },' \
+      '        // Connectivity
+        {
+            label: qsTr("Display"),
+            icon: "monitor",
+            description: qsTr("Resolution, refresh rate, arrangement"),
+            category: "connectivity"
+        },'
+
+    substituteInPlace $out/modules/nexus/PageCompRegistry.qml \
+      --replace-fail \
+        'import qs.modules.nexus.pages.bluetooth' \
+        'import qs.modules.nexus.pages.bluetooth
+import qs.modules.nexus.pages.display' \
+      --replace-fail \
+        '        // Connectivity
+        Component {
+            // Network' \
+        '        // Connectivity
+        Component {
+            // Display
+            StackPage {
+                Component {
+                    DisplayPage {}
+                }
+                Component {
+                    MonitorDetail {}
+                }
+            }
+        },
+        Component {
+            // Network'
+  '';
+
+  # Rebuild from the patched tree rather than overriding the flake's package:
+  # nix/default.nix hardcodes `src = ./..` on four separate derivations, so
+  # there is no `src` argument to override. callPackage on the copy makes
+  # `./..` resolve inside it instead.
+  #
+  # Every argument here mirrors caelestia-shell's own flake.nix. They are not
+  # defaults — clangStdenv and the withX11/withI3-disabled quickshell are what
+  # upstream builds against, and using nixpkgs' quickshell instead produces a
+  # binary whose IPC does not match. withCli = true matches the `with-cli`
+  # output the home-manager module defaults to.
+  caelestiaShell = pkgs.callPackage "${shellSrc}/nix" {
+    inherit (inputs.caelestia-shell.inputs) m3shapes;
+    rev = inputs.caelestia-shell.rev or inputs.caelestia-shell.dirtyRev;
+    stdenv = pkgs.clangStdenv;
+    quickshell =
+      inputs.caelestia-shell.inputs.quickshell.packages.${pkgs.stdenv.hostPlatform.system}.default.override {
+        withX11 = false;
+        withI3 = false;
+      };
+    caelestia-cli =
+      inputs.caelestia-shell.inputs.caelestia-cli.packages.${pkgs.stdenv.hostPlatform.system}.default;
+    withCli = true;
+  };
+
   # NOTE: there used to be a fuzzel-based `caelestia-wallpaper-picker` here.
   # It was removed because fuzzel is text-only and can't show wallpaper
-  # thumbnails. The SUPER+SHIFT+W keybind now opens caelestia's built-in
+  # thumbnails. The SUPER+SHIFT+P keybind now opens caelestia's built-in
   # `nexus` settings panel (caelestia:nexus global shortcut), which has a
   # real wallpaper picker with image previews AND live scheme previewing.
   # See modules/nexus/pages/wallandstyle/WallpaperSelect.qml in the shell.
@@ -87,6 +193,10 @@ in {
     enable = true;
     cli.enable = true;
     systemd.enable = false;
+
+    # The nexus Display page (see shellSrc above). Everything else about this
+    # package is upstream's own build.
+    package = caelestiaShell;
   };
 
   xdg.configFile = {
@@ -131,12 +241,19 @@ in {
     # `variables.lua` key. Don't duplicate upstream binds — last-wins in
     # Hyprland, so this can also rebind an existing combo by reusing it.
     #
-    # SUPER+SHIFT+W opens caelestia's `nexus` settings panel — a full GUI
-    # wallpaper picker with image thumbnails AND live scheme previewing (it
-    # generates the colours from each hovered wallpaper before you commit).
-    # This is a quickshell global shortcut registered by the shell; caelestia
-    # ships no default keybind for it, so we add one here. Once nexus is open,
-    # navigate to the "Wallpaper" tab.
+    # SUPER+SHIFT+P opens caelestia's `nexus` settings panel — the wallpaper
+    # picker with image thumbnails and live scheme previewing (it generates
+    # the colours from each hovered wallpaper before you commit), and the
+    # Display page added in shellSrc above. This is a quickshell global
+    # shortcut registered by the shell; caelestia ships no default keybind for
+    # it, so we add one here.
+    #
+    # P for the Win+P muscle memory, since Display is the page most worth
+    # reaching in a hurry. Plain SUPER+P is taken — it's upstream's
+    # kbPinWindow (variables.lua:79) — and SUPER+SHIFT is where caelestia
+    # already puts panel/tool invocations (SHIFT+S screenshot, SHIFT+C colour
+    # picker, SHIFT+L sleep), so this sits with its neighbours rather than in
+    # the SUPER+ALT resize plane or the SUPER+CTRL backlight plane below.
     #
     # Keyboard backlight (acer_ec::kbd_backlight). The acer-ec module already
     # installs brightnessctl, the acer-kbd-toggle script, and a udev rule
@@ -158,10 +275,58 @@ in {
       -- all binds for the combo, and hypr-user.lua runs after keybinds.lua so
       -- the upstream bind already exists by this point.
       hl.unbind("SUPER + W")
-      hl.bind("SUPER + SHIFT + W", hl.dsp.global("caelestia:nexus"))
+      hl.bind("SUPER + SHIFT + P", hl.dsp.global("caelestia:nexus"))
       hl.bind("SUPER + CTRL + up", hl.dsp.exec_cmd("brightnessctl -d acer_ec::kbd_backlight set +10%"), { repeating = true })
       hl.bind("SUPER + CTRL + down", hl.dsp.exec_cmd("brightnessctl -d acer_ec::kbd_backlight set 10%-"), { repeating = true })
       hl.bind("SUPER + CTRL + K", hl.dsp.exec_cmd("acer-kbd-toggle"))
+
+      -- ── Display / monitor configuration.
+      --
+      -- Hyprland's Lua parser refuses `hyprctl keyword` outright ("keyword
+      -- can't work with non-legacy parsers. Use eval."), so every runtime
+      -- monitor change has to go through `hyprctl eval`, and anything that
+      -- must survive a reload has to live in a file this config loads.
+      --
+      -- ~/.config/hypr/monitors.lua is that file, and it is deliberately NOT
+      -- managed by home-manager: it's the one thing a GUI has to be able to
+      -- write. Two writers, one format — both emit plain hl.monitor{} calls:
+      --   * nwg-displays, which writes monitors.conf AND monitors.lua on every
+      --     apply (settings_applier.py). The .conf half is inert under the Lua
+      --     parser; the .lua half is what we load here.
+      --   * the Nexus Display page, which writes the same file and *also*
+      --     applies live over `eval` so changes show up without a reload.
+      --
+      -- Rules are keyed on `desc:` rather than port name because the TV and
+      -- the projector are both HDMI-A-1 — a name-keyed rule would shove the
+      -- TV's 180Hz onto a projector that can't display it.
+      --
+      -- loadfile rather than require/dofile on purpose: a missing file is a
+      -- silent no-op (first boot, or before anything has been saved), and a
+      -- syntax error from a half-written GUI save returns nil instead of
+      -- raising. The pcall then keeps one bad monitor rule from taking the
+      -- whole Hyprland config — and your session — down with it.
+      local monitorsFile = os.getenv("HOME") .. "/.config/hypr/monitors.lua"
+      local monitorsChunk = loadfile(monitorsFile)
+      if monitorsChunk then
+          local ok, err = pcall(monitorsChunk)
+          if not ok then
+              print("[hypr-user] monitors.lua failed to apply: " .. tostring(err))
+          end
+      else
+          -- No saved layout yet. Upstream's catch-all (hyprland.lua:54) uses
+          -- mode="preferred", which takes the EDID preferred mode. On the FAZ
+          -- 27" that is 60Hz even though the panel advertises 180Hz; the
+          -- laptop's eDP-1 happens to prefer its full 144Hz, so only the
+          -- external was affected. highrr picks the highest refresh rate at
+          -- the best resolution instead.
+          --
+          -- Only reached when monitors.lua is absent: once a layout is saved,
+          -- its explicit per-output entries cover everything that's plugged
+          -- in, and re-running a catch-all here would fight them (setting one
+          -- output re-runs position="auto" for the others and reflows the
+          -- whole layout).
+          hl.monitor({ output = "", mode = "highrr", position = "auto", scale = 1 })
+      end
     '';
   };
 
@@ -170,7 +335,7 @@ in {
     # SUPER+T default because caelestia recolours it through the escape
     # sequences fish replays from ~/.local/state/caelestia/sequences.txt.
     foot
-    fuzzel # SUPER+V clipboard, SUPER+. emoji picker, SUPER+SHIFT+W wallpaper
+    fuzzel # SUPER+V clipboard, SUPER+. emoji picker
 
     # TUI apps themed by the caelestia scheme
     btop
@@ -183,9 +348,21 @@ in {
     pavucontrol # CTRL+ALT+V (vars.audioSettings)
     libnotify # notify-send, used by the shell and the F12 test bind
     quickshell # `qs` — see the let block above
-    wlr-randr # GUI display arranger (xrandr clone for Wayland). Caelestia has
-              # no display UI — Hyprland owns monitor config, so this is the
-              # visual tool for arrange/mirror/enable/disable. Run from launcher.
+    # ── Display arranging.
+    #
+    # nwg-displays is the drag-and-drop arranger: resolution, refresh rate,
+    # scale, transform, mirror, enable/disable. It's the fallback for anything
+    # the Nexus Display page doesn't cover, and the reference implementation
+    # the page's writer is modelled on.
+    #
+    # It needs the monitors.lua loader in hypr-user.lua to do anything here.
+    # Its own apply path is `write monitors.conf` + `hyprctl reload`, and the
+    # Lua parser never sources a .conf — so without that loader every change
+    # would look applied and then vanish on the next reload. It does emit a
+    # matching monitors.lua (settings_applier.py), which is what we read.
+    nwg-displays
+    wlr-randr # kept for scripting — `wlr-randr --output X --off` in a one-off
+              # shell is still handier than a GUI. Not the arranger any more.
     cliphist
     wl-clipboard
     trash-cli # `trash-empty 30` on session start
@@ -239,7 +416,7 @@ in {
 
   # ── Wallpaper source dir for the nexus picker and `caelestia wallpaper -r`.
   #
-  # The shell's nexus wallpaper picker (SUPER+SHIFT+W -> caelestia:nexus) and
+  # The shell's nexus wallpaper picker (SUPER+SHIFT+P -> caelestia:nexus) and
   # `caelestia wallpaper -r` both pull from here (CAELESTIA_WALLPAPERS_DIR
   # default; see paths.py / Paths.qml). Created empty on every rebuild so the
   # picker never errors — drop images in by hand. Idempotent: mkdir -p is a
