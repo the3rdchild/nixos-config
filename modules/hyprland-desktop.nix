@@ -24,6 +24,11 @@
   # client half — without the system service there is no provider to ask.
   services.geoclue2.enable = true;
 
+  # CTRL+SHIFT+ALT+V types the last clipboard entry via ydotool. This needs
+  # the ydotoold daemon and /dev/uinput access, so it can't be a home
+  # package — see the ydotool group added in ./user.nix.
+  programs.ydotool.enable = true;
+
   # NOTE: the lock screen does NOT need a security.pam.services entry. It
   # points PAM at its own config dir inside the package
   # (Quickshell.shellPath("assets/pam.d") in modules/lock/Pam.qml) rather

@@ -41,6 +41,22 @@
     "btop/btop.conf" = "${dots}/btop/btop.conf";
     "micro/settings.json" = "${dots}/micro/settings.json";
   };
+
+  # The `qs` CLI, which keybinds.lua uses to kill/restart the shell
+  # (CTRL+SUPER+SHIFT+R and CTRL+SUPER+ALT+R). The shell derivation bundles
+  # quickshell inside its own wrapper, so nothing puts `qs` on PATH.
+  #
+  # This MUST be the exact quickshell the shell was built against, with the
+  # same overrides as shell/flake.nix applies — nixpkgs' tagged quickshell is
+  # a different build and its IPC would not match the running instance.
+  # Mirrors shell/nix/default.nix exactly, down to the withModules call —
+  # anything less produces a different store path than the one the running
+  # shell was launched from.
+  quickshell =
+    (inputs.caelestia-shell.inputs.quickshell.packages.${pkgs.stdenv.hostPlatform.system}.default.override {
+      withX11 = false;
+      withI3 = false;
+    }).withModules [ pkgs.qt6.qtimageformats ];
 in {
   imports = [ inputs.caelestia-shell.homeManagerModules.default ];
 
@@ -107,6 +123,9 @@ in {
     # Launched from execs.lua / bound in keybinds.lua
     thunar
     hyprpicker
+    pavucontrol # CTRL+ALT+V (vars.audioSettings)
+    libnotify # notify-send, used by the shell and the F12 test bind
+    quickshell # `qs` — see the let block above
     cliphist
     wl-clipboard
     trash-cli # `trash-empty 30` on session start
