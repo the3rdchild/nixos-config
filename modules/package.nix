@@ -41,6 +41,12 @@
     onboard
     dbeaver-bin
     gamemode
+    # Proton/Wine prefix management for Steam games (e.g. STRINOVA launcher
+    # needs WebView2 pre-installed via `protontricks 1282270 webview2` because
+    # the launcher's built-in DXWSetup fails under Wine — see memory note
+    # strinova-proton-fix-v2.md Issue 5).
+    protontricks
+    winetricks
   ];
 
   programs.nix-ld.enable = true;
