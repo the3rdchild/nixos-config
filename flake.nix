@@ -14,11 +14,23 @@
       flake = false;
     };
 
-    # GTK4 settings app for Hyprland. Writes only to its own
-    # hyprland-gui.conf, which JaKooLit's entrypoint sources.
-    hyprmod = {
-      url = "github:BlueManCZ/hyprmod";
+    # ── Caelestia, in two halves.
+    #
+    # The shell is a quickshell app with a real flake: it exports
+    # homeManagerModules.default (-> programs.caelestia) and pins its own
+    # quickshell, which MUST be the git version — nixpkgs' tagged
+    # quickshell is too old to build it.
+    caelestia-shell = {
+      url = "github:caelestia-dots/shell";
       inputs.nixpkgs.follows = "nixpkgs";
+    };
+
+    # The dots are plain config files with no flake of their own, so they
+    # come in as a bare source tree. home/caelestia.nix derives a patched
+    # copy from it — upstream hardcodes a few FHS paths.
+    caelestia-dots = {
+      url = "github:caelestia-dots/caelestia";
+      flake = false;
     };
   };
 

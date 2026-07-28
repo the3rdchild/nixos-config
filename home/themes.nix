@@ -2,9 +2,13 @@
 #
 # SCOPE
 #   This module manages ONLY the GTK (gtk-theme), icon-theme, and cursor-theme
-#   for the user session. Waybar / rofi / kitty colouring is intentionally left
-#   to `wallust` (the engine JaKooLit's dots already drive) — those components
-#   regenerate from the current wallpaper and must not be pinned here.
+#   for the user session. Everything caelestia draws — the bar, launcher,
+#   notifications, foot, btop — is coloured by `caelestia scheme` from the
+#   current wallpaper and must not be pinned here.
+#
+#   The cursor is the one value both sides care about, so `themes.activeCursor`
+#   is exported and baked into hypr-vars.lua by ./caelestia.nix. Change the
+#   theme here and the Hyprland cursor follows on next login.
 #
 # WHAT IT DOES
 #   1. Defines a small, curated registry of themes (Catppuccin / Tokyo Night /
@@ -178,8 +182,9 @@ let
     gsettings set org.gnome.desktop.interface color-scheme "$color"
 
     echo "Switched to: $name ($gtk / $icon / $cursor)"
-    echo "NOTE: kitty/waybar/rofi colours are NOT changed — wallust owns those."
-    echo "      Run wallust against your wallpaper to recolour them if needed."
+    echo "NOTE: the caelestia shell/foot/btop palette is NOT changed — it is"
+    echo "      derived from the wallpaper. Use 'caelestia scheme' for those."
+    echo "      The Hyprland cursor updates at next login (hypr-vars.lua)."
   '';
 in
 {
@@ -188,6 +193,15 @@ in
       type = lib.types.enum (lib.attrNames themes);
       default = "catppuccin-mocha";
       description = "Active theme key (see registry in home/themes.nix).";
+    };
+
+    # Read by home/caelestia.nix, which bakes it into hypr-vars.lua so the
+    # cursor execs.lua sets at session start matches the one applied here.
+    activeCursor = lib.mkOption {
+      type = lib.types.str;
+      readOnly = true;
+      default = activeTheme.cursor;
+      description = "Cursor theme name of the active theme.";
     };
   };
 

@@ -6,19 +6,9 @@
     ./git.nix
     ./starship.nix
     ./kitty.nix
-    ./hyprland-dots.nix
+    ./caelestia.nix
     ./onboard.nix
     ./themes.nix
-    ./rofi-themes.nix
-
-    # ./hyprland/default.nix and ./waybar.nix are intentionally NOT imported.
-    #
-    # Both rendered their config into the nix store and symlinked it into
-    # ~/.config, which is read-only. JaKooLit's dots rewrite those same files
-    # at runtime (wallust recolouring, waybar config/style switching) and
-    # HyprMod appends its own `source =` line to hyprland.conf — none of which
-    # works against a store symlink. The files are kept on disk so the old
-    # declarative setup can be restored by re-adding these two imports.
   ];
 
   home = {

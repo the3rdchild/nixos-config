@@ -6,10 +6,10 @@
 }: {
   # List of packages to install for the user
   home.packages = with pkgs; [
-    # Desktop packages now live in ./hyprland-dots.nix, which owns the
-    # full dependency set for JaKooLit's dotfiles. `mako` was dropped in
-    # the move: the dots start `swaync` instead, and running both daemons
-    # would duplicate every notification.
+    # Desktop packages live in ./caelestia.nix, which owns the dependency
+    # set for the caelestia dots. Note that the caelestia shell bundles most
+    # of its own runtime deps (ddcutil, brightnessctl, lm_sensors, swappy,
+    # libqalculate, fish) inside its wrapper — don't duplicate them here.
 
     # Utilities
     ripgrep
