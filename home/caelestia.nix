@@ -31,6 +31,17 @@
     # same idea (Qt platform theme reading a config file) and is packaged.
     substituteInPlace $out/hypr/hyprland/env.lua \
       --replace-fail '"QT_QPA_PLATFORMTHEME", "qtengine"' '"QT_QPA_PLATFORMTHEME", "qt6ct"'
+
+    # gestures.lua binds a 4-finger swipe-down to `systemctl
+    # suspend-then-hibernate` (vars.sleepGestureCmd). Far too easy to trigger
+    # by accident on a laptop touchpad, so the whole gesture block is dropped
+    # here. The SUPER+SHIFT+L keybind in keybinds.lua still sleeps — this
+    # patch is scoped to gestures.lua, and `vars.sleepGestureCmd` stays
+    # defined. The $'...' form makes bash expand \n into real newlines so the
+    # multi-line block matches literally; --replace-fail makes a reformat in
+    # upstream fail loudly instead of silently keeping the gesture.
+    substituteInPlace $out/hypr/hyprland/gestures.lua \
+      --replace-fail $'hl.gesture({\n    fingers   = vars.gestureFingersMore,\n    direction = "down",\n    action    = function()\n        hl.exec_cmd(vars.sleepGestureCmd)\n    end,\n})' ""
   '';
 
   # Configs their own app rewrites at runtime. A nix-store symlink is
