@@ -57,6 +57,32 @@
       withX11 = false;
       withI3 = false;
     }).withModules [ pkgs.qt6.qtimageformats ];
+  # ── Wallpaper picker for the SUPER+SHIFT+W keybind.
+  #
+  # Caelestia's CLI doesn't render the wallpaper itself — the SHELL does, as
+  # a `caelestia-background` layer surface, reading the `current` symlink that
+  # `caelestia wallpaper -f` writes. So there is NO swww/awww/hyprpaper here:
+  # picking a file and handing it to `caelestia wallpaper -f` is the whole
+  # job. Colour extraction + shell re-render both follow automatically.
+  #
+  # Source dir mirrors CAELESTIA_WALLPAPERS_DIR's default (~/Pictures/Wallpapers);
+  # see `wallpapers_dir` in the CLI's paths.py. Override the env var to repoint.
+  wallpaperPicker = pkgs.writeShellScriptBin "caelestia-wallpaper-picker" ''
+    set -euo pipefail
+    dir="''${CAELESTIA_WALLPAPERS_DIR:-$HOME/Pictures/Wallpapers}"
+    if [ ! -d "$dir" ]; then
+      notify-send -u critical -i dialog-error-symbolic \
+        "No wallpaper directory" "$dir does not exist. Drop images there first."
+      exit 1
+    fi
+    # caelestia accepts the same set (see is_valid_image in wallpaper.py).
+    choice=$(fd -e jpg -e jpeg -e png -e webp -e tif -e tiff -e gif -t f . "$dir" 2>/dev/null \
+      | sed "s#^$dir/##" \
+      | sort \
+      | fuzzel -d -p "Wallpaper: ")
+    [ -n "$choice" ] || exit 0
+    exec caelestia wallpaper -f "$dir/$choice"
+  '';
 in {
   imports = [ inputs.caelestia-shell.homeManagerModules.default ];
 
@@ -106,6 +132,21 @@ in {
     # Sourced by caelestia's fish config for machine-local additions. Our
     # aliases live in home/shell.nix instead, so this just has to exist.
     "caelestia/user-config.fish".text = "";
+
+    # ── User Hyprland overrides, sourced at the END of caelestia's
+    # hyprland.lua (lines 74-76: maybe_create + require("hypr-user")).
+    #
+    # Only place for extra binds/window-rules that aren't driven by a
+    # `variables.lua` key. Don't duplicate upstream binds — last-wins in
+    # Hyprland, so this can also rebind an existing combo by reusing it.
+    #
+    # SUPER+SHIFT+W → fuzzel wallpaper picker. `caelestia wallpaper -f` sets
+    # the `current` symlink + extracts colours; the shell's background layer
+    # picks the new image up and the whole desktop recolours. No swww.
+    "caelestia/hypr-user.lua".text = ''
+      local vars = require("variables")
+      hl.bind("SUPER + SHIFT + W", hl.dsp.exec_cmd("caelestia-wallpaper-picker"))
+    '';
   };
 
   home.packages = with pkgs; [
@@ -113,7 +154,7 @@ in {
     # SUPER+T default because caelestia recolours it through the escape
     # sequences fish replays from ~/.local/state/caelestia/sequences.txt.
     foot
-    fuzzel # SUPER+V clipboard, SUPER+. emoji picker
+    fuzzel # SUPER+V clipboard, SUPER+. emoji picker, SUPER+SHIFT+W wallpaper
 
     # TUI apps themed by the caelestia scheme
     btop
@@ -139,6 +180,10 @@ in {
     # Qt theming — replaces the AUR-only qtengine referenced by env.lua
     qt6Packages.qt6ct
     darkly
+
+    # fd — fast file finder, used by caelestia-wallpaper-picker to list images.
+    fd
+    wallpaperPicker # SUPER+SHIFT+W — fuzzel wallpaper picker (let block)
 
     # Fonts the shell's QML expects. The shell derivation builds its own
     # fontconfig for its process, but nothing else on the system sees it.
@@ -175,5 +220,16 @@ in {
         run cp -f ${dots}/firefox/user.js "$profile/user.js"
         run chmod u+w "$profile/chrome/userChrome.css" "$profile/user.js"
       done
+    '';
+
+  # ── Wallpaper source dir for the SUPER+SHIFT+W picker.
+  #
+  # `caelestia wallpaper -r` and caelestia-wallpaper-picker both pull from
+  # here (CAELESTIA_WALLPAPERS_DIR default; see paths.py). Created empty on
+  # every rebuild so the picker never errors — drop images in by hand.
+  # Idempotent: `mkdir -p` is a no-op once it exists.
+  home.activation.caelestiaWallpapersDir =
+    lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+      run mkdir -p "$HOME/Pictures/Wallpapers"
     '';
 }
