@@ -126,9 +126,22 @@ in {
     # This is a quickshell global shortcut registered by the shell; caelestia
     # ships no default keybind for it, so we add one here. Once nexus is open,
     # navigate to the "Wallpaper" tab.
+    #
+    # Keyboard backlight (acer_ec::kbd_backlight). The acer-ec module already
+    # installs brightnessctl, the acer-kbd-toggle script, and a udev rule
+    # granting the video group write access to the LED. These binds just hook
+    # it to keys — no widget possible (bar is compiled QML; see caelestia
+    # notes).
+    #
+    # Keys chosen to avoid upstream conflicts: SUPER+ALT+arrows are window
+    # resize, SUPER+K is showall panels, so we use the entirely-free
+    # SUPER+CTRL plane. Up/Down step ±10%, K toggles off.
     "caelestia/hypr-user.lua".text = ''
       local vars = require("variables")
       hl.bind("SUPER + SHIFT + W", hl.dsp.global("caelestia:nexus"))
+      hl.bind("SUPER + CTRL + up", hl.dsp.exec_cmd("brightnessctl -d acer_ec::kbd_backlight set +10%"), { repeating = true })
+      hl.bind("SUPER + CTRL + down", hl.dsp.exec_cmd("brightnessctl -d acer_ec::kbd_backlight set 10%-"), { repeating = true })
+      hl.bind("SUPER + CTRL + K", hl.dsp.exec_cmd("acer-kbd-toggle"))
     '';
   };
 
