@@ -165,7 +165,7 @@ through `variables.lua`, overridden by `~/.config/caelestia/hypr-vars.lua`
 | | |
 |---|---|
 | `SUPER` tap | launcher |
-| `SUPER+T` `+W` `+C` `+E` | foot, firefox, code, thunar |
+| `SUPER+T` `+C` `+E` | foot, code, thunar |
 | `SUPER+Q` `+F` `+P` | close, fullscreen, pin |
 | `SUPER+ALT+Space` | toggle floating |
 | `SUPER+Z` / `SUPER+X` | move / resize with mouse |

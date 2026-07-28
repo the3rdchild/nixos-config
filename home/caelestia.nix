@@ -149,6 +149,15 @@ in {
     # SUPER+CTRL plane. Up/Down step ±10%, K toggles off.
     "caelestia/hypr-user.lua".text = ''
       local vars = require("variables")
+      -- Disable SUPER+W (upstream kbBrowser → launches firefox).
+      --
+      -- Must be unbind, not a no_op rebind: Hyprland dispatches EVERY keybind
+      -- matching a combo, it is not last-wins. A second bind on SUPER+W just
+      -- adds a no-op next to the firefox one, and firefox still launches
+      -- (`hyprctl binds` showed two modmask-64 W entries). hl.unbind removes
+      -- all binds for the combo, and hypr-user.lua runs after keybinds.lua so
+      -- the upstream bind already exists by this point.
+      hl.unbind("SUPER + W")
       hl.bind("SUPER + SHIFT + W", hl.dsp.global("caelestia:nexus"))
       hl.bind("SUPER + CTRL + up", hl.dsp.exec_cmd("brightnessctl -d acer_ec::kbd_backlight set +10%"), { repeating = true })
       hl.bind("SUPER + CTRL + down", hl.dsp.exec_cmd("brightnessctl -d acer_ec::kbd_backlight set 10%-"), { repeating = true })
