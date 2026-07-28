@@ -163,6 +163,9 @@ in {
     pavucontrol # CTRL+ALT+V (vars.audioSettings)
     libnotify # notify-send, used by the shell and the F12 test bind
     quickshell # `qs` — see the let block above
+    wlr-randr # GUI display arranger (xrandr clone for Wayland). Caelestia has
+              # no display UI — Hyprland owns monitor config, so this is the
+              # visual tool for arrange/mirror/enable/disable. Run from launcher.
     cliphist
     wl-clipboard
     trash-cli # `trash-empty 30` on session start
