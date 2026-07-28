@@ -1,0 +1,202 @@
+pragma ComponentBehavior: Bound
+
+import QtQuick
+import QtQuick.Layouts
+import Caelestia.Config
+import qs.components
+import qs.services
+import qs.modules.nexus.common
+
+// Display settings: one row per output, plus the arrangement presets.
+//
+// Per-output detail lives in MonitorDetail (sub-page 1). Everything here acts
+// on all outputs at once, because Hyprland reflows the whole layout whenever
+// any single output changes — see Monitors.apply().
+PageBase {
+    id: root
+
+    title: qsTr("Display")
+
+    ColumnLayout {
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.top: parent.top
+        width: root.cappedWidth
+        spacing: Tokens.spacing.extraSmall / 2
+
+        SectionHeader {
+            first: true
+            text: qsTr("Displays")
+        }
+
+        Repeater {
+            id: monitorList
+
+            model: Monitors.list
+
+            NavRow {
+                id: monitorRow
+
+                required property var modelData
+                required property int index
+
+                readonly property bool off: modelData.disabled === true
+
+                first: index === 0
+                last: index === monitorList.count - 1
+
+                icon: Monitors.isInternal(modelData) ? "laptop" : modelData.mirrorOf && modelData.mirrorOf !== "none" ? "content_copy" : "monitor"
+                label: Monitors.labelFor(modelData)
+
+                status: {
+                    if (off)
+                        return qsTr("%1 — off").arg(modelData.name);
+                    if (modelData.mirrorOf && modelData.mirrorOf !== "none")
+                        return qsTr("%1 — mirroring %2").arg(modelData.name).arg(modelData.mirrorOf);
+
+                    const hz = Math.round(modelData.refreshRate);
+                    const scale = modelData.scale !== 1 ? qsTr(", %1× scale").arg(modelData.scale) : "";
+                    return qsTr("%1 — %2×%3 at %4 Hz%5").arg(modelData.name).arg(modelData.width).arg(modelData.height).arg(hz).arg(scale);
+                }
+
+                onClicked: {
+                    Monitors.selectedKey = Monitors.keyFor(modelData);
+                    root.nState.openSubPage(1);
+                }
+            }
+        }
+
+        // No outputs at all means hyprctl failed or has not answered yet —
+        // an empty list with no explanation reads as a broken page.
+        Loader {
+            Layout.fillWidth: true
+            active: !Monitors.list.length
+            visible: active
+
+            sourceComponent: ConnectedRect {
+                first: true
+                last: true
+                implicitHeight: emptyText.implicitHeight + Tokens.padding.large * 2
+
+                StyledText {
+                    id: emptyText
+
+                    anchors.centerIn: parent
+                    width: parent.width - Tokens.padding.largeIncreased * 2
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.WordWrap
+                    color: Colours.palette.m3outline
+                    font: Tokens.font.body.small
+                    text: Monitors.ready ? qsTr("No outputs reported by Hyprland.") : qsTr("Reading outputs…")
+                }
+            }
+        }
+
+        SectionHeader {
+            text: qsTr("Arrangement")
+        }
+
+        NavRow {
+            first: true
+            icon: "splitscreen_right"
+            label: qsTr("Extend to the right")
+            status: qsTr("External displays placed right of this screen")
+            onClicked: Monitors.apply(Monitors.presetExtend(true), true)
+        }
+
+        NavRow {
+            icon: "splitscreen_left"
+            label: qsTr("Extend to the left")
+            status: qsTr("External displays placed left of this screen")
+            onClicked: Monitors.apply(Monitors.presetExtend(false), true)
+        }
+
+        NavRow {
+            icon: "content_copy"
+            label: qsTr("Duplicate")
+            status: qsTr("Show the same image on every display")
+            onClicked: Monitors.apply(Monitors.presetMirror(), true)
+        }
+
+        NavRow {
+            icon: "laptop"
+            label: qsTr("This screen only")
+            status: qsTr("Turn off external displays")
+            onClicked: Monitors.apply(Monitors.presetOnly(true), true)
+        }
+
+        NavRow {
+            last: true
+            icon: "monitor"
+            label: qsTr("External only")
+            status: qsTr("Turn off the built-in screen")
+            onClicked: Monitors.apply(Monitors.presetOnly(false), true)
+        }
+
+        SectionHeader {
+            text: qsTr("Saved layout")
+        }
+
+        NavRow {
+            first: true
+            icon: "save"
+            label: qsTr("Save current layout")
+            status: qsTr("Reapplied on every Hyprland reload")
+            onClicked: Monitors.persist(Monitors.specs())
+        }
+
+        NavRow {
+            last: true
+            icon: "restart_alt"
+            label: qsTr("Forget saved layout")
+            status: qsTr("Fall back to automatic placement at highest refresh rate")
+            onClicked: Monitors.forget()
+        }
+
+        // Surfaced rather than logged: a rejected mode is the single most
+        // likely thing to go wrong here, and silently reverting to the old
+        // one looks like the page simply ignored the click.
+        Loader {
+            Layout.fillWidth: true
+            Layout.topMargin: Tokens.spacing.medium
+            active: !!Monitors.lastError
+            visible: active
+
+            sourceComponent: ConnectedRect {
+                first: true
+                last: true
+                color: Colours.palette.m3errorContainer
+                implicitHeight: errLayout.implicitHeight + Tokens.padding.large * 2
+
+                RowLayout {
+                    id: errLayout
+
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.leftMargin: Tokens.padding.largeIncreased
+                    anchors.rightMargin: Tokens.padding.largeIncreased
+                    spacing: Tokens.spacing.medium
+
+                    MaterialIcon {
+                        text: "error"
+                        color: Colours.palette.m3onErrorContainer
+                        fontStyle: Tokens.font.icon.medium
+                    }
+
+                    StyledText {
+                        Layout.fillWidth: true
+                        text: Monitors.lastError
+                        color: Colours.palette.m3onErrorContainer
+                        font: Tokens.font.label.small
+                        wrapMode: Text.WordWrap
+                    }
+                }
+            }
+        }
+    }
+
+    // The snapshot goes stale while the page is closed — hotplug events are
+    // handled in the service, but a mode changed from nwg-displays or the CLI
+    // is not signalled at all.
+    Component.onCompleted: Monitors.refresh()
+}
