@@ -57,32 +57,12 @@
       withX11 = false;
       withI3 = false;
     }).withModules [ pkgs.qt6.qtimageformats ];
-  # ── Wallpaper picker for the SUPER+SHIFT+W keybind.
-  #
-  # Caelestia's CLI doesn't render the wallpaper itself — the SHELL does, as
-  # a `caelestia-background` layer surface, reading the `current` symlink that
-  # `caelestia wallpaper -f` writes. So there is NO swww/awww/hyprpaper here:
-  # picking a file and handing it to `caelestia wallpaper -f` is the whole
-  # job. Colour extraction + shell re-render both follow automatically.
-  #
-  # Source dir mirrors CAELESTIA_WALLPAPERS_DIR's default (~/Pictures/Wallpapers);
-  # see `wallpapers_dir` in the CLI's paths.py. Override the env var to repoint.
-  wallpaperPicker = pkgs.writeShellScriptBin "caelestia-wallpaper-picker" ''
-    set -euo pipefail
-    dir="''${CAELESTIA_WALLPAPERS_DIR:-$HOME/Pictures/Wallpapers}"
-    if [ ! -d "$dir" ]; then
-      notify-send -u critical -i dialog-error-symbolic \
-        "No wallpaper directory" "$dir does not exist. Drop images there first."
-      exit 1
-    fi
-    # caelestia accepts the same set (see is_valid_image in wallpaper.py).
-    choice=$(fd -e jpg -e jpeg -e png -e webp -e tif -e tiff -e gif -t f . "$dir" 2>/dev/null \
-      | sed "s#^$dir/##" \
-      | sort \
-      | fuzzel -d -p "Wallpaper: ")
-    [ -n "$choice" ] || exit 0
-    exec caelestia wallpaper -f "$dir/$choice"
-  '';
+  # NOTE: there used to be a fuzzel-based `caelestia-wallpaper-picker` here.
+  # It was removed because fuzzel is text-only and can't show wallpaper
+  # thumbnails. The SUPER+SHIFT+W keybind now opens caelestia's built-in
+  # `nexus` settings panel (caelestia:nexus global shortcut), which has a
+  # real wallpaper picker with image previews AND live scheme previewing.
+  # See modules/nexus/pages/wallandstyle/WallpaperSelect.qml in the shell.
 in {
   imports = [ inputs.caelestia-shell.homeManagerModules.default ];
 
@@ -140,12 +120,15 @@ in {
     # `variables.lua` key. Don't duplicate upstream binds — last-wins in
     # Hyprland, so this can also rebind an existing combo by reusing it.
     #
-    # SUPER+SHIFT+W → fuzzel wallpaper picker. `caelestia wallpaper -f` sets
-    # the `current` symlink + extracts colours; the shell's background layer
-    # picks the new image up and the whole desktop recolours. No swww.
+    # SUPER+SHIFT+W opens caelestia's `nexus` settings panel — a full GUI
+    # wallpaper picker with image thumbnails AND live scheme previewing (it
+    # generates the colours from each hovered wallpaper before you commit).
+    # This is a quickshell global shortcut registered by the shell; caelestia
+    # ships no default keybind for it, so we add one here. Once nexus is open,
+    # navigate to the "Wallpaper" tab.
     "caelestia/hypr-user.lua".text = ''
       local vars = require("variables")
-      hl.bind("SUPER + SHIFT + W", hl.dsp.exec_cmd("caelestia-wallpaper-picker"))
+      hl.bind("SUPER + SHIFT + W", hl.dsp.global("caelestia:nexus"))
     '';
   };
 
@@ -180,10 +163,6 @@ in {
     # Qt theming — replaces the AUR-only qtengine referenced by env.lua
     qt6Packages.qt6ct
     darkly
-
-    # fd — fast file finder, used by caelestia-wallpaper-picker to list images.
-    fd
-    wallpaperPicker # SUPER+SHIFT+W — fuzzel wallpaper picker (let block)
 
     # Fonts the shell's QML expects. The shell derivation builds its own
     # fontconfig for its process, but nothing else on the system sees it.
@@ -222,12 +201,13 @@ in {
       done
     '';
 
-  # ── Wallpaper source dir for the SUPER+SHIFT+W picker.
+  # ── Wallpaper source dir for the nexus picker and `caelestia wallpaper -r`.
   #
-  # `caelestia wallpaper -r` and caelestia-wallpaper-picker both pull from
-  # here (CAELESTIA_WALLPAPERS_DIR default; see paths.py). Created empty on
-  # every rebuild so the picker never errors — drop images in by hand.
-  # Idempotent: `mkdir -p` is a no-op once it exists.
+  # The shell's nexus wallpaper picker (SUPER+SHIFT+W -> caelestia:nexus) and
+  # `caelestia wallpaper -r` both pull from here (CAELESTIA_WALLPAPERS_DIR
+  # default; see paths.py / Paths.qml). Created empty on every rebuild so the
+  # picker never errors — drop images in by hand. Idempotent: mkdir -p is a
+  # no-op once it exists.
   home.activation.caelestiaWallpapersDir =
     lib.hm.dag.entryAfter [ "writeBoundary" ] ''
       run mkdir -p "$HOME/Pictures/Wallpapers"
