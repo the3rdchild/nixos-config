@@ -110,12 +110,24 @@ PageBase {
             onClicked: Monitors.apply(Monitors.presetExtend(false), true)
         }
 
-        NavRow {
-            icon: "content_copy"
-            label: qsTr("Duplicate")
-            status: qsTr("Show the same image on every display")
-            onClicked: Monitors.apply(Monitors.presetMirror(), true)
-        }
+        // NOTE: there is deliberately no "Duplicate" preset here.
+        //
+        // Mirroring segfaults Hyprland. The backtrace lands in
+        // Render::IHyprRenderer::damageMirrorsWith, reached from renderMonitor
+        // -> CMonitorFrameScheduler::onFrame, i.e. the compositor dies on the
+        // first frame it composites for a mirrored output. It takes the whole
+        // session with it and drops you in Safe Mode.
+        //
+        // This is a longstanding upstream bug class, not something this page
+        // can work around: hyprwm/Hyprland#854, #980, #1281, #7181, and
+        // discussion #13517 — the last being "hyprpaper makes Hyprland crash
+        // when starting monitor mirroring", which is our exact shape, since
+        // caelestia also draws a per-screen background layer.
+        //
+        // "External only" below is the safe way to drive a projector.
+        // Re-test with `hyprctl keyword monitor <name>,preferred,auto,1,mirror,eDP-1`
+        // on a Hyprland bump; if it survives a frame, restore this preset and
+        // the "Duplicate from" row in MonitorDetail.qml.
 
         NavRow {
             icon: "laptop"

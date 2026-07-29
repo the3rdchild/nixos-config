@@ -20,7 +20,11 @@ PageBase {
 
     readonly property var monitor: Monitors.find(Monitors.selectedKey)
 
-    readonly property string resolution: monitor ? `${monitor.width}x${monitor.height}` : ""
+    // Via Monitors.currentModeFor rather than monitor.width/height directly: a
+    // disabled output reports 0x0, which made this "0x0" and left the
+    // resolution and refresh-rate dropdowns with nothing to show — so an output
+    // could not be reconfigured while it was off.
+    readonly property string resolution: monitor ? Monitors.currentModeFor(monitor).split("@")[0] : ""
     readonly property list<string> resolutions: monitor ? Monitors.resolutionsFor(monitor) : []
     readonly property list<string> refreshRates: monitor ? Monitors.refreshRatesFor(monitor, resolution) : []
 
@@ -29,9 +33,6 @@ PageBase {
     // reachable rather than a free slider that mostly errors.
     readonly property list<real> scales: [1, 1.25, 1.5, 1.75, 2]
     readonly property list<int> transforms: [0, 1, 2, 3]
-
-    // Mirroring is by port name — Hyprland's `mirror` key does not take desc:.
-    readonly property list<var> mirrorTargets: Monitors.list.filter(m => monitor && m.name !== monitor.name && m.disabled !== true)
 
     function applyChange(mutate: var): void {
         const all = Monitors.specs();
@@ -115,25 +116,6 @@ PageBase {
                 text: root.transformLabel(modelData)
                 icon: root.monitor && (root.monitor.transform ?? 0) === modelData ? "check" : ""
                 activeIcon: "screen_rotation"
-            }
-        }
-
-        Variants {
-            id: mirrorVariants
-
-            // A leading null is the "off" entry; the menu is a flat list, so
-            // the sentinel has to live in the model rather than beside it.
-            model: [null].concat(root.mirrorTargets)
-
-            MenuItem {
-                required property var modelData
-
-                text: modelData ? Monitors.labelFor(modelData) : qsTr("Off")
-                icon: {
-                    const cur = root.monitor && root.monitor.mirrorOf !== "none" ? root.monitor.mirrorOf : "";
-                    return (modelData ? modelData.name : "") === (cur ?? "") ? "check" : "";
-                }
-                activeIcon: modelData ? "content_copy" : "crop_free"
             }
         }
 
@@ -241,25 +223,18 @@ PageBase {
             }
         }
 
-        SelectRow {
+        // "Duplicate from" used to live here. It is gone because selecting a
+        // mirror source segfaults Hyprland outright — see the long note in
+        // DisplayPage.qml for the backtrace and the upstream issues.
+        //
+        // Monitors.qml still parses and re-emits `mirrorOf`, so a mirror rule
+        // written by nwg-displays survives a round-trip through this page
+        // instead of being silently dropped. It just can't be set from here.
+        InfoRow {
             last: true
-            label: qsTr("Duplicate from")
-            subtext: qsTr("Show another display's image on this one")
-            menuOnTop: true
-            menuItems: mirrorVariants.instances
-            active: {
-                const cur = root.monitor && root.monitor.mirrorOf !== "none" ? root.monitor.mirrorOf : "";
-                if (!cur)
-                    return mirrorVariants.instances[0] ?? null;
-                const target = root.mirrorTargets.find(m => m.name === cur);
-                return target ? mirrorVariants.instances[root.mirrorTargets.indexOf(target) + 1] ?? null : null;
-            }
-            fallbackText: qsTr("Off")
-            onSelected: item => {
-                const idx = mirrorVariants.instances.indexOf(item);
-                const target = idx > 0 ? root.mirrorTargets[idx - 1] : null;
-                root.applyChange(spec => spec.mirrorOf = target ? target.name : "");
-            }
+            icon: "info"
+            label: qsTr("Duplicating is unavailable")
+            subtext: qsTr("Mirroring crashes Hyprland. Use \"External only\" to present.")
         }
     }
 }

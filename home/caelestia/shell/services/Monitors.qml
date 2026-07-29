@@ -106,7 +106,41 @@ Singleton {
         return seen.sort((a, b) => parseFloat(b) - parseFloat(a));
     }
 
+    // Best mode an output can do: highest resolution, then highest refresh at
+    // that resolution. Used as the stand-in for a disabled output, which has no
+    // meaningful current mode of its own.
+    function bestModeFor(m: var): string {
+        let best = "";
+        let bestPixels = -1;
+        let bestRate = -1;
+
+        for (const mode of m.availableModes ?? []) {
+            const parts = normaliseMode(mode).split("@");
+            const dims = (parts[0] ?? "").split("x");
+            if (dims.length !== 2 || !parts[1])
+                continue;
+
+            const pixels = parseInt(dims[0]) * parseInt(dims[1]);
+            const rate = parseFloat(parts[1]);
+            if (pixels > bestPixels || (pixels === bestPixels && rate > bestRate)) {
+                best = normaliseMode(mode);
+                bestPixels = pixels;
+                bestRate = rate;
+            }
+        }
+
+        return best;
+    }
+
     function currentModeFor(m: var): string {
+        // A disabled output reports width/height 0 and refreshRate 60 — there
+        // is no mode to read back, because it isn't driving one. Deriving from
+        // those zeroes yields "0x0@60.00", which Hyprland accepts and silently
+        // ignores, so the output could never be switched back on, and every
+        // resolution/refresh dropdown built off it came out empty.
+        if (m.disabled === true || !m.width || !m.height)
+            return bestModeFor(m) || "preferred";
+
         return `${m.width}x${m.height}@${m.refreshRate.toFixed(2)}`;
     }
 
@@ -143,8 +177,17 @@ Singleton {
         if (spec.disabled) {
             props.push("disabled = true");
         } else {
+            // `disabled = false` has to be explicit. A monitor rule that simply
+            // omits the key leaves an already-disabled output disabled — the
+            // call returns ok and nothing happens, so "turn it back on" was a
+            // silent no-op. Verified against Hyprland 0.56.0: identical rule
+            // with and without this line, only the one carrying it re-enables.
+            props.push("disabled = false");
             props.push(`mode = ${luaStr(spec.mode)}`);
-            props.push(`position = ${luaStr(`${spec.x}x${spec.y}`)}`);
+            // A disabled output reports position -1x-1. Hand Hyprland "auto"
+            // rather than negative coordinates and let it place the output;
+            // presets that know where they want it always set x/y themselves.
+            props.push(`position = ${spec.x < 0 || spec.y < 0 ? luaStr("auto") : luaStr(`${spec.x}x${spec.y}`)}`);
             props.push(`scale = ${spec.scale}`);
             if (spec.transform)
                 props.push(`transform = ${spec.transform}`);
@@ -232,23 +275,11 @@ Singleton {
         return ordered;
     }
 
-    function presetMirror(): var {
-        const all = specs();
-        const internal = all.find(s => isInternal(find(s.output)));
-        const source = internal ?? all[0];
-        if (!source)
-            return all;
-
-        for (const spec of all) {
-            spec.disabled = false;
-            spec.x = 0;
-            spec.y = 0;
-            // Hyprland mirrors by port name, not description — `mirror` takes
-            // a monitor name and desc: is not accepted there.
-            spec.mirrorOf = spec.output === source.output ? "" : source.name;
-        }
-        return all;
-    }
+    // NOTE: presetMirror() was removed along with the two UI entry points that
+    // called it — mirroring segfaults Hyprland (see DisplayPage.qml). Parsing
+    // and emission of `mirrorOf` below is intentionally kept, so a mirror rule
+    // written by nwg-displays round-trips through this service unharmed rather
+    // than being silently dropped the next time the user changes a resolution.
 
     function presetOnly(internalOnly: bool): var {
         const all = specs();
@@ -324,8 +355,27 @@ Singleton {
         }
 
         onExited: exitCode => {
-            if (exitCode === 0 && pendingPersist)
-                root.persist(pendingPersist);
+            // Deliberately NOT persisting here, even on exit 0.
+            //
+            // hyprctl exits 0 as soon as Hyprland *accepts* the batch, which
+            // is well before it composites a frame using it. A layout that
+            // kills the compositor would already be on disk by then, and
+            // hypr-user.lua replays monitors.lua on every config load — so
+            // the next start would crash too. That is Safe Mode, permanently,
+            // with no working session left to undo it from.
+            //
+            // Mirroring did exactly this (see DisplayPage.qml); the only
+            // reason it didn't brick the session was that the segfault
+            // happened to truncate the file mid-write.
+            //
+            // Instead the layout serves probation, and survival is the test:
+            // quickshell holds a Wayland connection to this compositor, so if
+            // Hyprland dies this process dies with it and the timer never
+            // fires. Nothing reaches disk unless the layout actually worked.
+            if (exitCode === 0 && pendingPersist) {
+                probationTimer.specs = pendingPersist;
+                probationTimer.restart();
+            }
             pendingPersist = null;
             // Hyprland needs a moment to settle a mode switch before the new
             // geometry shows up in `hyprctl monitors`.
@@ -340,6 +390,23 @@ Singleton {
         onTriggered: {
             root.refresh();
             root.applied();
+        }
+    }
+
+    // See the long note in applyProc.onExited. Long enough to cover the mode
+    // switch and the first composited frames — a compositor that is going to
+    // die on this layout has died well inside this window. Short enough that
+    // applying a layout and immediately rebooting still keeps it.
+    Timer {
+        id: probationTimer
+
+        property var specs: null
+
+        interval: 8000
+        onTriggered: {
+            if (specs)
+                root.persist(specs);
+            specs = null;
         }
     }
 
