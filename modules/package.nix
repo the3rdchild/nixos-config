@@ -41,12 +41,24 @@
     onboard
     dbeaver-bin
     gamemode
+    flashprint
     # Proton/Wine prefix management for Steam games (e.g. STRINOVA launcher
     # needs WebView2 pre-installed via `protontricks 1282270 webview2` because
     # the launcher's built-in DXWSetup fails under Wine — see memory note
     # strinova-proton-fix-v2.md Issue 5).
     protontricks
     winetricks
+
+    # Disk / EFI tooling kept around after the Windows dual-boot GPT repair
+    # (docs recovery guide, commit f2c9cf6).
+    efibootmgr
+    parted
+    gparted
+    gptfdisk
+
+    # Windows-apps-in-a-container front end (Electron based — see
+    # nixpkgs.config.permittedInsecurePackages in modules/setting.nix).
+    winboat
 
     # OpenPLC Runtime build dependencies (docs/NIXOS.md step 1). install.sh
     # has no NixOS branch, so the toolchain is declared here. gcc/cmake/etc.

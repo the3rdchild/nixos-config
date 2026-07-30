@@ -8,6 +8,14 @@
 
   nix.settings.experimental-features = [ "nix-command" "flakes" ];
   nixpkgs.config.allowUnfree = true;
+
+  # winboat (modules/package.nix) is an Electron app and nixpkgs still pins it
+  # to electron 40.10.5, which upstream has marked EOL/insecure. Without this
+  # the whole evaluation refuses. Drop this entry once winboat moves to a
+  # supported electron, or remove winboat instead.
+  nixpkgs.config.permittedInsecurePackages = [
+    "electron-40.10.5"
+  ];
   nix.settings.trusted-users = [ "root" "noouoops" ];
 
   # Don't pull every package's "doc" output into system-path.

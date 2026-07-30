@@ -13,9 +13,11 @@
 
     shellAliases = {
       grep = "grep --color=auto";
-      nrs = "sudo nixos-rebuild switch --flake '/etc/nixos#noouoops'";
+      # The config lives in the git repo at /mnt/doc/config; /etc/nixos is no
+      # longer a second copy to keep in sync (the two silently diverged once).
+      nrs = "sudo nixos-rebuild switch --flake '/mnt/doc/config#noouoops'";
       ncg = "nix-collect-garbage -d";
-      nrst = "sudo nixos-rebuild switch --flake '/etc/nixos#noouoops' --show-trace";
+      nrst = "sudo nixos-rebuild switch --flake '/mnt/doc/config#noouoops' --show-trace";
       cbe = "sudo nix-collect-garbage -d && sudo nix profile wipe-history --profile /nix/var/nix/profiles/system";
     };
 
