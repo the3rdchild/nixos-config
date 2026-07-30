@@ -18,14 +18,16 @@
     # but it is pinned explicitly so it survives an upstream default change.
     HandlePowerKey = "poweroff";
 
-    # Closing the lid does nothing, on every power source. The default is
-    # "suspend" on battery and "suspend" on AC, which is what we're overriding.
-    #
-    # All three keys are needed — logind picks one based on state, and an
-    # unset one falls back to its own default rather than to HandleLidSwitch:
-    #   HandleLidSwitch              — on battery, not docked
+    # Closing the lid does nothing, on every power source. logind picks one of
+    # these three based on state, most specific first:
+    #   HandleLidSwitchDocked        — docked, or >1 display connected
     #   HandleLidSwitchExternalPower — on AC
-    #   HandleLidSwitchDocked        — with an external monitor / dock attached
+    #   HandleLidSwitch              — everything else (i.e. on battery)
+    #
+    # Only HandleLidSwitch actually needs overriding (NixOS defaults it to
+    # "suspend"; the other two already fall through to it when unset). They are
+    # all pinned anyway so no future default can reintroduce a suspend on one
+    # power source but not the other.
     HandleLidSwitch = "ignore";
     HandleLidSwitchExternalPower = "ignore";
     HandleLidSwitchDocked = "ignore";

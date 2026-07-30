@@ -12,6 +12,7 @@
     ./hyprland-desktop.nix
     ./service.nix
     ./setting.nix
+    ./power.nix
     ./user.nix
     ./docker.nix
     ./filesystems.nix
