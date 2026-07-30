@@ -1,1 +1,1 @@
-4.0-stable: configuration for power button, lid, and idle behavior
+4.0.1-stable: prevent Docker from auto-starting at boot
