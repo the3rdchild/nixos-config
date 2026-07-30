@@ -47,6 +47,18 @@
     # strinova-proton-fix-v2.md Issue 5).
     protontricks
     winetricks
+
+    # OpenPLC Runtime build dependencies (docs/NIXOS.md step 1). install.sh
+    # has no NixOS branch, so the toolchain is declared here. gcc/cmake/etc.
+    # are also the source of the nix-store lib paths that scripts/nixos-env.sh
+    # derives at run time (libstdc++.so.6, python3-embed.pc, libpython).
+    gcc
+    gnumake
+    cmake
+    ccache # optional; speeds up rebuilds
+    pkg-config
+    python3
+    ethtool
   ];
 
   programs.nix-ld.enable = true;

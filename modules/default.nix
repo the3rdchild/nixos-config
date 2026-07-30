@@ -17,5 +17,6 @@
     ./filesystems.nix
     ./automount.nix
     ./acer-ec.nix
+    ./openplc.nix
   ];
 }
