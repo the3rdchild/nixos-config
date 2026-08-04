@@ -71,6 +71,9 @@
     pkg-config
     python3
     ethtool
+    bun
+    python314Packages.pip
+    dbeaver-bin
   ];
 
   programs.nix-ld.enable = true;

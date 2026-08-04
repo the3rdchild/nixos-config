@@ -12,6 +12,8 @@
         email = "ytcrash555@gmail.com";
      };
      init.defaultBranch = "main";
+     # Selalu pakai SSH untuk GitHub, walaupun remote-nya di-clone via HTTPS
+     url."git@github.com:".insteadOf = "https://github.com/";
     };
   };
 

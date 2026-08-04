@@ -221,7 +221,7 @@ in {
           terminal     = "foot",
           browser      = "firefox",
           editor       = "code",
-          fileExplorer = "thunar",
+          fileExplorer = "dolphin",
 
           -- Kept in sync with themes.active (see home/themes.nix); upstream
           -- defaults to sweet-cursors, which isn't in nixpkgs.

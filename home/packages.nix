@@ -18,15 +18,11 @@
     lazygit
     unzip
     wget
-    # Fonts (ensure noto-fonts-cjk-sans is included if needed for CJK)
-    noto-fonts
-    noto-fonts-cjk-sans
-    noto-fonts-color-emoji # renamed from noto-fonts-emoji
-    nerd-fonts.fira-code
-    nerd-fonts.jetbrains-mono
-    nerd-fonts.iosevka
+    # Fonts live in ../modules/fonts.nix (system-level) so SDDM and other
+    # non-session consumers see them too. Caelestia's shell-specific fonts
+    # stay in ./caelestia.nix.
   ];
 
-  # Font configuration
+  # Still needed: caelestia.nix installs fonts into the user profile.
   fonts.fontconfig.enable = true;
 }

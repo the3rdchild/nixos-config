@@ -3,6 +3,7 @@
     ./sddm.nix
     ./bootloader.nix
     ./locales.nix
+    ./fonts.nix
     ./network.nix
     ./audio.nix
     ./bluetooth.nix
