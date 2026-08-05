@@ -19,11 +19,11 @@
     wget
     dpkg
     microsoft-edge
-    firefox
+    # firefox
     nodejs_22
     python312
     obsidian
-    discord
+    # discord
     steam
     # wireguard-ui removed — was a server-side peer manager (overkill for one
     # client tunnel) and its db/ under /etc/wireguard conflicted with wg-quick.
@@ -38,7 +38,7 @@
     localsend
     fanctl
     cloudflare-warp
-    onboard
+    # onboard
     dbeaver-bin
     gamemode
     flashprint
@@ -58,7 +58,7 @@
 
     # Windows-apps-in-a-container front end (Electron based — see
     # nixpkgs.config.permittedInsecurePackages in modules/setting.nix).
-    winboat
+    # winboat
 
     # OpenPLC Runtime build dependencies (docs/NIXOS.md step 1). install.sh
     # has no NixOS branch, so the toolchain is declared here. gcc/cmake/etc.
