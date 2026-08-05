@@ -148,6 +148,30 @@ import qs.modules.nexus.pages.display' \
         },
         Component {
             // Network'
+
+    # ── Keep rounded corners in game mode.
+    #
+    # services/GameMode.qml applies one fixed bundle of Hyprland overrides in
+    # setDynamicConfs(): animations, blur, shadows, gaps, border size, tearing
+    # — and rounding. Game mode is worth keeping on this hardware (Alder Lake-P
+    # GT1 driving 1920x1080@144 + 1920x1080@180 = ~672 Mpix/s, where the iGPU
+    # sits pinned at its 300MHz efficiency floor and never goes idle), but the
+    # rounding term is the odd one out: it is a cheap fragment-shader term,
+    # while the measured GPU cost is in blur and per-frame compositing. Square
+    # corners were the only part of game mode that looked wrong, for no
+    # meaningful frame-time gain, so that one line is dropped.
+    #
+    # Scoped deliberately: gaps_in/gaps_out/border_size stay in the bundle.
+    #
+    # Safe against the toggle's own state readback — the PersistentProperties
+    # binding keys `enabled` on Hypr.options["animations:enabled"] === 0, not
+    # on rounding, so the on/off state still round-trips correctly. Disabling
+    # game mode restores everything via Hypr.extras.message("reload") anyway.
+    #
+    # --replace-fail so an upstream reorder or reindent of that object breaks
+    # the build instead of silently restoring the square corners.
+    substituteInPlace $out/services/GameMode.qml \
+      --replace-fail $'            "decoration:rounding": 0,\n' ""
   '';
 
   # Rebuild from the patched tree rather than overriding the flake's package:
