@@ -14,6 +14,7 @@
     ./service.nix
     ./setting.nix
     ./power.nix
+    ./memory.nix
     ./user.nix
     ./docker.nix
     ./filesystems.nix

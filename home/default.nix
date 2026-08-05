@@ -9,6 +9,7 @@
     ./caelestia.nix
     ./onboard.nix
     ./themes.nix
+    ./app-limits.nix
   ];
 
   home = {

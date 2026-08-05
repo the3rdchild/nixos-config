@@ -40,27 +40,9 @@
     "vm.page-cluster" = 0;
   };
 
-  # ── Zen Browser memory ceiling.
-  #
-  # Zen is a Flatpak (app.zen_browser.zen) and the single largest consumer —
-  # observed growing from 3.8 GB to 4.8 GB over one session. Flatpak already
-  # runs each app in its own transient scope under app.slice, so the limits
-  # attach to the cgroup that exists rather than needing a wrapper or a
-  # rewritten .desktop entry.
-  #
-  # The directory name is not a typo. systemd reads drop-ins from unit names
-  # truncated at each dash, so "app-flatpak-app.zen_browser.zen-.scope.d"
-  # matches every launch despite the random PID suffix flatpak appends.
-  # Verified against a live instance via `systemctl --user show -p DropInPaths`.
-  #
-  # MemoryHigh is the working knob: it throttles and reclaims under pressure
-  # without killing anything. MemoryMax is only a backstop, set well clear of
-  # High so it stays a last resort rather than the normal path. Swap is left
-  # alone on purpose — capping it removes the graceful valve and turns every
-  # overshoot into an OOM kill.
-  environment.etc."systemd/user/app-flatpak-app.zen_browser.zen-.scope.d/50-memory.conf".text = ''
-    [Scope]
-    MemoryHigh=6G
-    MemoryMax=8G
-  '';
+  # The other half of this — the per-app memory ceiling on Zen, the largest
+  # single consumer — lives in ../home/app-limits.nix. It has to be a *user*
+  # unit drop-in, and environment.etc cannot place one: NixOS already owns
+  # /etc/systemd/user as a generated store symlink, so writing beneath it
+  # fails the etc build outright with a permission error.
 }

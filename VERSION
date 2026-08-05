@@ -1,1 +1,1 @@
-4.0.1-stable: prevent Docker from auto-starting at boot
+4.5-testing: configuration for zram and Zen Browser memory limits
