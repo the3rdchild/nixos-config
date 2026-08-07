@@ -30,7 +30,6 @@
     # The tunnel is now a plain NetworkManager connection, toggled from the
     # Plasma network applet or `nmcli connection up wg0`.
     wireguard-tools # keeps the `wg` CLI for inspecting NM-managed tunnels
-    flatpak
     qdirstat
     cameractrls
     obs-studio

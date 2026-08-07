@@ -5,4 +5,5 @@
   services.printing.enable = true;
   services.openssh.enable = true;
   services.cloudflare-warp.enable = true;
+  services.flatpak.enable = true;
 }
