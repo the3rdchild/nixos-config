@@ -1,4 +1,4 @@
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 
 let
   # ── wg0-purge: tear down every trace of a wireguard tunnel.
@@ -100,6 +100,35 @@ let
         ;;
     esac
   '';
+
+  # ── warp: toggle Cloudflare WARP (1.1.1.1) manually.
+  #
+  # `services.cloudflare-warp.enable` starts `warp-svc`; this script is just a
+  # thin switch so the CLI usage matches the existing `vpn` helper. Run
+  # `warp-cli --accept-tos registration new` once before the first connect.
+  #
+  # WARP and the wg0 WireGuard tunnel both install full-tunnel policy rules, so
+  # keep only one active at a time. Use `vpn` for wg0 and `warp` for WARP.
+  warp = pkgs.writeShellScriptBin "warp" ''
+    set -u
+    warpcli=${pkgs.cloudflare-warp}/bin/warp-cli
+
+    is_up() {
+      $warpcli --accept-tos status 2>/dev/null \
+        | ${pkgs.gnugrep}/bin/grep -qi '^Status: Connected'
+    }
+
+    case "''${1-toggle}" in
+      up|on)   $warpcli --accept-tos connect ;;
+      down|off) $warpcli --accept-tos disconnect ;;
+      toggle)  if is_up; then $warpcli --accept-tos disconnect; else $warpcli --accept-tos connect; fi ;;
+      status)  $warpcli --accept-tos status ;;
+      *)
+        echo "usage: warp [up|down|toggle|status]" >&2
+        exit 2
+        ;;
+    esac
+  '';
 in
 {
   networking.hostName = "noouoops";
@@ -112,11 +141,130 @@ in
   # Enable networking
   networking.networkmanager.enable = true;
 
-  # FIX: Route NetworkManager DNS through systemd-resolved to prevent signature conflicts
-  networking.networkmanager.dns = "systemd-resolved";
-  services.resolved.enable = true;
+  # ── DNS: one resolver, no per-link anything.
+  #
+  # The bug this replaces: `nsswitch.conf` sends every glibc lookup to
+  # systemd-resolved with `resolve [!UNAVAIL=return]`, so /etc/resolv.conf is
+  # never consulted. resolved then prefers a *link-scoped* DNS server on the
+  # default-route link over its Global config — so the DHCP-supplied
+  # 10.116.173.225 (Telkomsel) won, `DNS=1.1.1.1` below was never reached, and
+  # duckduckgo.com resolved to the internetbaik.telkomsel.com block page even
+  # with WARP connected and healthy.
+  #
+  # `ipv4.ignore-auto-dns` in networking.networkmanager.connectionConfig did
+  # NOT fix that: it lands in NetworkManager.conf's [connection] section, but
+  # that section only honours NM's documented connection-default properties and
+  # ignore-auto-dns is not one of them. `nmcli` reported it as "no" and NM kept
+  # installing the DHCP server. It was silently a no-op — do not re-add it.
+  #
+  # dns="none" is the fix that generalises: NetworkManager stops touching
+  # resolv.conf and stops calling SetLinkDNS entirely, so *no* interface —
+  # wlp5s0, enp4s0, enp0s20f0u9, or any network joined in future — can inject a
+  # resolver. resolved is left with only the global config below.
+  #
+  # Tailscale is unaffected: it configures its link (100.100.100.100 + ~ts.net
+  # routing domains) directly over resolved's D-Bus API, not through NM, and a
+  # specific routing domain still beats the "~." default route below. wg0 is
+  # likewise untouched — it pushes no DNS.
+  #
+  # Trade-off accepted: captive-portal wifi (hotel/airport) will not resolve,
+  # because there is no longer any path for a local network to supply a
+  # resolver. Escape hatch: `sudo resolvectl dns <iface> <portal-dns>` for the
+  # duration of the login, then `sudo resolvectl revert <iface>`.
+  #
+  # mkForce because nixos/modules/system/boot/resolved.nix hard-sets this to
+  # "systemd-resolved" (not mkDefault) whenever services.resolved is enabled.
+  networking.networkmanager.dns = lib.mkForce "none";
+
+  services.resolved = {
+    enable = true;
+    # Strict DoT, with the server name attached so the certificate is actually
+    # hostname-verified — plain "1.1.1.1" would leave resolved unable to check
+    # who it is talking to. Strict (not opportunistic) is deliberate: on an ISP
+    # that hijacks port 53, an opportunistic downgrade to plaintext hands the
+    # hijacker the win. This fails closed instead.
+    settings.Resolve = {
+      DNSOverTLS = "true";
+      DNSSEC = "false";
+      # "~." makes the global config the default route for every name, so
+      # nothing falls through to a link scope.
+      Domains = "~.";
+      # systemd ships compiled-in fallback resolvers (Cloudflare *and* Google)
+      # that resolved uses whenever it thinks it has no DNS configured. Those
+      # are plaintext :53 and would be a leak the moment DoT hiccups. Empty it.
+      FallbackDNS = "";
+    };
+  };
+  networking.nameservers = [
+    "1.1.1.1#cloudflare-dns.com"
+    "1.0.0.1#cloudflare-dns.com"
+    "2606:4700:4700::1111#cloudflare-dns.com"
+    "2606:4700:4700::1001#cloudflare-dns.com"
+  ];
+
   networking.firewall.allowedTCPPorts = [ 4321 ];
-  networking.firewall.allowedUDPPorts = [ 4321 ];  # optional, untuk mDNS/SSDP discovery
+  networking.firewall.allowedUDPPorts = [
+    4321   # optional, untuk mDNS/SSDP discovery
+  ];
+  # (Removed: UDP 2408. It was inbound-only and WARP is on MASQUE — HTTP/3 over
+  # UDP 443 outbound — so the rule matched nothing either way.)
+
+  # ── DNS leak guard: no plaintext :53 leaves this box.
+  #
+  # The config above is the real fix; this is the backstop that makes a
+  # regression fail loudly instead of silently returning a block page — which
+  # is exactly how the original leak stayed hidden. Anything with a hardcoded
+  # resolver (8.8.8.8 baked into an app, a DHCP hook, a future misconfig) hits
+  # this and errors out rather than quietly talking to the ISP.
+  #
+  # REJECT, not DROP: callers fail immediately with a visible error instead of
+  # hanging for a timeout.
+  #
+  # Allowed through: loopback (resolved's own stub, and WARP's local proxy on
+  # 127.0.2.2/127.0.2.3), Tailscale MagicDNS, and anything already inside the
+  # WARP or wg0 tunnels — traffic there is encrypted before it reaches the ISP.
+  # Normal operation never trips this at all, since strict DoT uses tcp/853.
+  networking.firewall.extraCommands = ''
+    # v4
+    iptables -w -N dns-leak-guard 2>/dev/null || iptables -w -F dns-leak-guard
+    iptables -w -A dns-leak-guard -o lo -j RETURN
+    iptables -w -A dns-leak-guard -d 127.0.0.0/8 -j RETURN
+    iptables -w -A dns-leak-guard -d 100.100.100.100 -j RETURN
+    for dev in CloudflareWARP tailscale0 wg0; do
+      iptables -w -A dns-leak-guard -o "$dev" -j RETURN
+    done
+    iptables -w -A dns-leak-guard -p udp -j REJECT --reject-with icmp-port-unreachable
+    iptables -w -A dns-leak-guard -p tcp -j REJECT --reject-with tcp-reset
+    for proto in udp tcp; do
+      iptables -w -C OUTPUT -p $proto --dport 53 -j dns-leak-guard 2>/dev/null \
+        || iptables -w -I OUTPUT -p $proto --dport 53 -j dns-leak-guard
+    done
+
+    # v6
+    ip6tables -w -N dns-leak-guard 2>/dev/null || ip6tables -w -F dns-leak-guard
+    ip6tables -w -A dns-leak-guard -o lo -j RETURN
+    ip6tables -w -A dns-leak-guard -d ::1/128 -j RETURN
+    ip6tables -w -A dns-leak-guard -d fd7a:115c:a1e0::53/128 -j RETURN
+    for dev in CloudflareWARP tailscale0 wg0; do
+      ip6tables -w -A dns-leak-guard -o "$dev" -j RETURN
+    done
+    ip6tables -w -A dns-leak-guard -p udp -j REJECT --reject-with icmp6-port-unreachable
+    ip6tables -w -A dns-leak-guard -p tcp -j REJECT --reject-with tcp-reset
+    for proto in udp tcp; do
+      ip6tables -w -C OUTPUT -p $proto --dport 53 -j dns-leak-guard 2>/dev/null \
+        || ip6tables -w -I OUTPUT -p $proto --dport 53 -j dns-leak-guard
+    done
+  '';
+  networking.firewall.extraStopCommands = ''
+    for proto in udp tcp; do
+      iptables  -w -D OUTPUT -p $proto --dport 53 -j dns-leak-guard 2>/dev/null || true
+      ip6tables -w -D OUTPUT -p $proto --dport 53 -j dns-leak-guard 2>/dev/null || true
+    done
+    iptables  -w -F dns-leak-guard 2>/dev/null || true
+    iptables  -w -X dns-leak-guard 2>/dev/null || true
+    ip6tables -w -F dns-leak-guard 2>/dev/null || true
+    ip6tables -w -X dns-leak-guard 2>/dev/null || true
+  '';
 
   # WireGuard is now managed by NetworkManager. Toggle it with `vpn on` /
   # `vpn off` / `vpn toggle` (see the script above), or from the network applet.
@@ -182,7 +330,7 @@ in
     };
   };
 
-  environment.systemPackages = [ vpn wg0-purge ];
+  environment.systemPackages = [ vpn wg0-purge warp ];
 
   # `nmcli up/down` is already passwordless for the networkmanager group, but
   # the rule/link surgery in wg0-purge needs root. Scope the exemption to that

@@ -1,1 +1,1 @@
-4.5.5.2-stable: add nmap, picocom, screen, and tailscale to systemPackages
+4.6-stable: enhance DNS leak protection
