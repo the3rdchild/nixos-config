@@ -6,4 +6,5 @@
   services.openssh.enable = true;
   services.cloudflare-warp.enable = true;
   services.flatpak.enable = true;
+  services.tailscale.enable = true;
 }

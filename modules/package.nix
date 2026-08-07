@@ -74,6 +74,9 @@
     python314Packages.pip
     dbeaver-bin
     nmap
+    picocom
+    screen
+    tailscale
   ];
 
   programs.nix-ld.enable = true;
