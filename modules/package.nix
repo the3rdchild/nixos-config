@@ -73,6 +73,7 @@
     bun
     python314Packages.pip
     dbeaver-bin
+    nmap
   ];
 
   programs.nix-ld.enable = true;
