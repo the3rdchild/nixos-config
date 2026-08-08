@@ -109,6 +109,10 @@ let
   #
   # WARP and the wg0 WireGuard tunnel both install full-tunnel policy rules, so
   # keep only one active at a time. Use `vpn` for wg0 and `warp` for WARP.
+  #
+  # WARP never comes up on its own — see warp-no-autoconnect below. You must
+  # run `warp up` after every boot. DNS does not depend on this: resolved talks
+  # Cloudflare over DoT whether the tunnel is up or down.
   warp = pkgs.writeShellScriptBin "warp" ''
     set -u
     warpcli=${pkgs.cloudflare-warp}/bin/warp-cli
@@ -328,6 +332,51 @@ in
       OnBootSec = "5min";
       OnUnitActiveSec = "1d";
     };
+  };
+
+  # ── WARP must NOT auto-connect.
+  #
+  # Same problem as wg0, different mechanism. WARP's autoconnect is *stateful*,
+  # not configured: `warp-cli connect` writes `always_on: true` into
+  # /var/lib/cloudflare-warp/settings.json, and warp-svc then re-establishes
+  # the tunnel on every boot. `warp-cli disconnect` writes it back to false.
+  # There is no declarative knob — this warp-cli build's `settings` subcommand
+  # only has list/reset/support-url/mode-switch-allowed, no `set always-on`.
+  #
+  # So the state is only ever as sticky as whatever you did last, which means a
+  # single `warp up` silently turns WARP into a boot-time tunnel forever. This
+  # oneshot re-asserts "disconnected" at every boot, making `warp up` an
+  # explicit, per-session action.
+  #
+  # The daemon itself is left running (services.cloudflare-warp.enable in
+  # modules/service.nix) so `warp up` stays instant and needs no root — an
+  # idle warp-svc creates no interface and no policy rules; `CloudflareWARP`
+  # only appears on connect.
+  systemd.services.warp-no-autoconnect = {
+    description = "Leave Cloudflare WARP disconnected at boot (connect with `warp up`)";
+    after = [ "cloudflare-warp.service" ];
+    wants = [ "cloudflare-warp.service" ];
+    wantedBy = [ "multi-user.target" ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+    script = ''
+      warpcli=${pkgs.cloudflare-warp}/bin/warp-cli
+
+      # warp-svc opens its IPC socket a beat after the unit reports started.
+      # Without this wait the disconnect hits a dead socket, fails silently,
+      # and WARP comes up connected anyway — the exact bug we're fixing.
+      for _ in $(${pkgs.coreutils}/bin/seq 30); do
+        $warpcli --accept-tos status >/dev/null 2>&1 && break
+        ${pkgs.coreutils}/bin/sleep 1
+      done
+
+      # Tolerate failure: already-disconnected is the common case and is not an
+      # error worth failing the boot over.
+      $warpcli --accept-tos disconnect >/dev/null 2>&1 || true
+      echo "warp: $($warpcli --accept-tos status 2>&1 | ${pkgs.coreutils}/bin/head -1)"
+    '';
   };
 
   environment.systemPackages = [ vpn wg0-purge warp ];
