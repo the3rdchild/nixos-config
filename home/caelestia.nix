@@ -204,6 +204,31 @@ import qs.modules.nexus.pages.display' \
   # `nexus` settings panel (caelestia:nexus global shortcut), which has a
   # real wallpaper picker with image previews AND live scheme previewing.
   # See modules/nexus/pages/wallandstyle/WallpaperSelect.qml in the shell.
+
+  # ── SUPER+B → pwvucontrol, as a show/hide toggle.
+  #
+  # pwvucontrol is GTK4 without single-instance handling, so a plain
+  # `exec_cmd pwvucontrol` bind stacks a fresh window on every press. This
+  # does the three-state toggle instead: launch if absent, focus if open but
+  # unfocused, close if it is the active window.
+  #
+  # The class is matched case-insensitively on the substring rather than
+  # pinned to the literal `com.saivert.pwvucontrol` app-id, so the bind keeps
+  # working if upstream renames it (or if you swap the binary for pavucontrol
+  # below — its class is org.pulseaudio.pavucontrol, which does not match, so
+  # change `class` too if you do).
+  volumeControlToggle = pkgs.writeShellScriptBin "volume-control-toggle" ''
+    jq=${pkgs.jq}/bin/jq
+    addr=$(hyprctl clients -j | $jq -r 'first(.[] | select(.class | test("pwvucontrol"; "i")) | .address) // empty')
+
+    if [ -z "$addr" ]; then
+      exec ${pkgs.pwvucontrol}/bin/pwvucontrol
+    elif [ "$addr" = "$(hyprctl activewindow -j | $jq -r '.address // empty')" ]; then
+      hyprctl dispatch closewindow "address:$addr"
+    else
+      hyprctl dispatch focuswindow "address:$addr"
+    fi
+  '';
 in {
   imports = [ inputs.caelestia-shell.homeManagerModules.default ];
 
@@ -352,6 +377,15 @@ in {
       hl.bind("SUPER + CTRL + down", hl.dsp.exec_cmd("brightnessctl -d acer_ec::kbd_backlight set 10%-"), { repeating = true })
       hl.bind("SUPER + CTRL + K", hl.dsp.exec_cmd("acer-kbd-toggle"))
 
+      -- SUPER+B → pwvucontrol (PipeWire volume control), show/hide toggle.
+      --
+      -- B was completely free: `hyprctl binds` listed no entry for the key at
+      -- any modmask, and upstream keybinds.lua never uses it — so no unbind is
+      -- needed here, unlike SUPER+W/SUPER+V above. Upstream's own audio bind
+      -- (CTRL+ALT+V, vars.audioSettings → pavucontrol) is untouched and still
+      -- works; this is the faster second door.
+      hl.bind("SUPER + B", hl.dsp.exec_cmd("volume-control-toggle"))
+
       -- ── Display / monitor configuration.
       --
       -- Hyprland's Lua parser refuses `hyprctl keyword` outright ("keyword
@@ -418,6 +452,8 @@ in {
     thunar
     hyprpicker
     pavucontrol # CTRL+ALT+V (vars.audioSettings)
+    pwvucontrol # SUPER+B via volume-control-toggle (let block above)
+    volumeControlToggle
     libnotify # notify-send, used by the shell and the F12 test bind
     quickshell # `qs` — see the let block above
     # ── Display arranging.
