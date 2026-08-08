@@ -172,6 +172,40 @@ import qs.modules.nexus.pages.display' \
     # the build instead of silently restoring the square corners.
     substituteInPlace $out/services/GameMode.qml \
       --replace-fail $'            "decoration:rounding": 0,\n' ""
+
+    # ── A closed dropdown still swallows clicks on the row beneath it.
+    #
+    # components/controls/Menu.qml hides a closed menu with opacity 0 plus
+    # `transform: Scale { yScale: 0.1 }`. Opacity and scale change how an item
+    # draws, never whether it hit-tests, so the box stays in the input path at
+    # a tenth of its height, hanging directly below its own chevron.
+    #
+    # The residue scales with the entry count, which is why this looks like a
+    # per-monitor bug rather than a component one. On this laptop:
+    #
+    #   eDP-1     1 resolution   ~50px box  -> ~5px  residue, hits nothing
+    #   HDMI-A-1  16 resolutions ~770px box -> ~77px residue, covers one row
+    #
+    # A SelectRow is ~66px, so on HDMI the Resolution menu lands exactly on
+    # Refresh rate and nothing else: that row's chevron is dead and the row
+    # does not even highlight on hover, while Scale and Transform below it are
+    # untouched. Confirmed by hover test on Hyprland 0.56.0.
+    #
+    # `visible` is the fix rather than `enabled`, because the root MouseArea
+    # already carries `enabled: expanded` and that plainly is not keeping the
+    # subtree out of hit testing. visible:false removes it from both rendering
+    # and input, unconditionally.
+    #
+    # Keyed on opacity, not on `expanded`, so the close animation still plays
+    # out: opacity is animated by a Behavior, so this only goes false on the
+    # frame it actually reaches 0.
+    #
+    # Not scoped to the Display page on purpose — every dropdown in the shell
+    # with enough entries has this, the Display page just happens to be where
+    # a 16-entry menu sits directly above another control.
+    substituteInPlace $out/components/controls/Menu.qml \
+      --replace-fail $'    enabled: expanded\n    hoverEnabled: expanded\n' \
+        $'    enabled: expanded\n    hoverEnabled: expanded\n    visible: opacity > 0\n'
   '';
 
   # Rebuild from the patched tree rather than overriding the flake's package:
