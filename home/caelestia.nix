@@ -251,6 +251,32 @@ in {
           -- defaults to sweet-cursors, which isn't in nixpkgs.
           cursorTheme  = "${config.themes.activeCursor}",
           cursorSize   = 24,
+
+          -- ── iGPU relief (Aug 2026).
+          --
+          -- The Alder Lake-P GT1 composites both 1080p high-refresh outputs
+          -- by design (PRIME offload — the RTX 3050 only wakes for
+          -- nvidia-offload clients) and measured ~75% busy at its 1200MHz
+          -- ceiling at idle desktop. Three upstream defaults cause it:
+          --
+          --   windowOpacity = 0.95 — rules.lua applies `opacity 0.95 override`
+          --     to EVERY non-fullscreen window, so every window counts as
+          --     translucent and Hyprland blurs behind all of them, every
+          --     frame. 1.0 makes windows opaque; blur is then only sampled
+          --     where something is genuinely translucent (bar, popups, foot
+          --     with its own alpha=0.78). The single biggest win.
+          --   blur size=8/passes=2 — blur re-renders per pass; 4/1 quarters
+          --     the cost with a barely visible difference.
+          --   shadows (range 15, render_power 4) — a per-window fragment
+          --     cost on every frame at 180Hz, for a barely-there 6%-alpha
+          --     shadow. Off.
+          --
+          -- Rounding stays — it's a cheap one-time shader term. Animations
+          -- stay — they're the shell's identity and only cost while moving.
+          windowOpacity = 1.0,
+          blurSize      = 4,
+          blurPasses    = 1,
+          shadowEnabled = false,
       }
     '';
 
