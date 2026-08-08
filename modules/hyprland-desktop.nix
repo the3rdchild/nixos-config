@@ -29,6 +29,41 @@
   # package — see the ydotool group added in ./user.nix.
   programs.ydotool.enable = true;
 
+  # ── CTRL+ESC as a second SUPER.
+  #
+  # Remapped at the evdev level (keyd), not in Hyprland: the compositor
+  # receives a real LEFT_META while CTRL+ESC is held, so every SUPER bind
+  # works unchanged — keybinds, SUPER+mouse move/resize, the SUPER-tap
+  # launcher — with zero bind duplication. ESC alone and CTRL alone are
+  # untouched; only the chord emits META.
+  #
+  # swap(), not a plain `esc = meta`: mapping to a bare keycode only strips
+  # CTRL from that single event, leaving keyd inside the [control] layer for
+  # as long as CTRL is physically held — so the *next* key arrives as
+  # CTRL+SUPER+key. Hyprland matches modmasks exactly, so no SUPER bind ever
+  # fired, and CTRL leaking through let VS Code / Zen claim the chord.
+  # swap(meta) tears down the control layer and stands up the built-in meta
+  # layer for the duration of ESC's depression, so CTRL is genuinely released.
+  # Press order therefore matters: CTRL first, then ESC, holding both.
+  #
+  # Conflict check (Aug 2026): nothing in caelestia's keybinds.lua or this
+  # config uses CTRL+ESC. The one ESC bind that exists is CTRL+SHIFT+Escape
+  # (kbSystemMonitorWs, variables.lua:87). keyd resolves chords through
+  # composite layers in activation order, so SHIFT-then-CTRL-then-ESC would
+  # otherwise land in [control] and emit META instead — the two composite
+  # layers below pin ESC back to itself in both orders.
+  services.keyd = {
+    enable = true;
+    keyboards.default = {
+      ids = [ "*" ];
+      settings = {
+        control.esc = "swap(meta)";
+        "control+shift".esc = "esc";
+        "shift+control".esc = "esc";
+      };
+    };
+  };
+
   # NOTE: the lock screen does NOT need a security.pam.services entry. It
   # points PAM at its own config dir inside the package
   # (Quickshell.shellPath("assets/pam.d") in modules/lock/Pam.qml) rather

@@ -164,6 +164,7 @@ through `variables.lua`, overridden by `~/.config/caelestia/hypr-vars.lua`
 
 | | |
 |---|---|
+| `CTRL+ESC` (held) | alias for `SUPER` itself (keyd remap — every SUPER bind works, incl. mouse) |
 | `SUPER` tap | launcher |
 | `SUPER+T` `+C` `+E` | foot, code, dolphin |
 | `SUPER+Q` `+F` `+P` | close, fullscreen, pin |
