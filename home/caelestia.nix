@@ -229,6 +229,57 @@ import qs.modules.nexus.pages.display' \
       hyprctl dispatch focuswindow "address:$addr"
     fi
   '';
+
+  # ── SUPER+SHIFT+K → on-screen keyboard (wvkbd), show/hide toggle.
+  #
+  # wvkbd, not onboard (home/onboard.nix), because onboard is an X11 app that
+  # types through XTEST: under Hyprland its keystrokes only reach XWayland
+  # clients and vanish in foot, Zen, or a Wayland-native VS Code. wvkbd is a
+  # layer-shell surface driving zwp_virtual_keyboard_v1, so it sits above every
+  # window, never takes keyboard focus away from the app you are typing into,
+  # and its keys land everywhere.
+  #
+  # The trade-off, accepted deliberately: layer-shell surfaces are anchored by
+  # the protocol. `wvkbd --help` exposes height, colours and font but no
+  # position, and Hyprland has no layerrule for repositioning a layer — so this
+  # cannot be dragged around the way a floating window can. Height only.
+  #
+  # Exclusive zone left on (i.e. no --non-exclusive): the compositor shrinks
+  # the tiled area while the keyboard is up, so it never covers the very text
+  # field you are typing into. Add --non-exclusive below if you would rather it
+  # overlap windows and leave layout untouched.
+  #
+  # pkill exits 1 when nothing matched, which doubles as the "not started yet"
+  # branch — first press launches it visible, every press after that flips
+  # visibility via SIGRTMIN. Nothing runs at login.
+  oskToggle = pkgs.writeShellScriptBin "osk-toggle" ''
+    if ${pkgs.procps}/bin/pkill -RTMIN -x wvkbd-mobintl; then
+      exit 0
+    fi
+    exec ${wvkbdBelowShell}/bin/wvkbd-mobintl -H 300 --fn "Rubik 16"
+  '';
+
+  # ── Keep the OSK underneath the shell's panels.
+  #
+  # `hyprctl layers` showed caelestia's surfaces on level 2 (top) and wvkbd on
+  # level 3 (overlay), so the keyboard covered the bar whenever a panel expanded
+  # on hover. Hyprland cannot fix this from config: HL.LayerRuleSpec (see
+  # share/hypr/stubs/hl.meta.lua) offers `order`, which only sorts layers
+  # *within* one level, and no rule at all for moving a surface between levels.
+  #
+  # So the level has to change client-side. wvkbd hardcodes the layer at
+  # main.c:61 with no flag to override it — a one-token substitution, and the
+  # constant appears exactly once in the source, so --replace-fail will catch
+  # any upstream rename on the next bump rather than silently no-op.
+  #
+  # Landing on level 2 alongside caelestia's own surfaces, the ordering is then
+  # decided by `order` — see the layer_rule in hypr-user.lua below.
+  wvkbdBelowShell = pkgs.wvkbd.overrideAttrs (old: {
+    postPatch = (old.postPatch or "") + ''
+      substituteInPlace main.c \
+        --replace-fail ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY ZWLR_LAYER_SHELL_V1_LAYER_TOP
+    '';
+  });
 in {
   imports = [ inputs.caelestia-shell.homeManagerModules.default ];
 
@@ -386,6 +437,24 @@ in {
       -- works; this is the faster second door.
       hl.bind("SUPER + B", hl.dsp.exec_cmd("volume-control-toggle"))
 
+      -- SUPER+SHIFT+K → on-screen keyboard toggle (wvkbd; see the let block).
+      --
+      -- `hyprctl binds` showed SUPER+SHIFT (modmask 65) free on K, and the
+      -- SHIFT plane is where caelestia already parks panel/tool invocations,
+      -- same reasoning as SUPER+SHIFT+P above. Keeps the K family together:
+      -- SUPER+K showall panels (upstream), SUPER+CTRL+K keyboard backlight,
+      -- SUPER+SHIFT+K on-screen keyboard.
+      hl.bind("SUPER + SHIFT + K", hl.dsp.exec_cmd("osk-toggle"))
+
+      -- Render the OSK beneath the shell's panels. The wvkbd override in the
+      -- Nix let block moves it from the overlay level down to `top`, where
+      -- caelestia's own surfaces live; this decides who wins inside that level.
+      -- Higher order = closer to the front, default 0, so a negative value puts
+      -- the keyboard behind caelestia-drawers and the bar can expand on hover
+      -- without being covered. If it somehow lands the wrong way round after a
+      -- Hyprland bump, flip the sign here — nothing else depends on it.
+      hl.layer_rule({ match = { namespace = "wvkbd" }, order = -1 })
+
       -- ── Display / monitor configuration.
       --
       -- Hyprland's Lua parser refuses `hyprctl keyword` outright ("keyword
@@ -454,6 +523,8 @@ in {
     pavucontrol # CTRL+ALT+V (vars.audioSettings)
     pwvucontrol # SUPER+B via volume-control-toggle (let block above)
     volumeControlToggle
+    wvkbdBelowShell # SUPER+SHIFT+K via osk-toggle (let block above)
+    oskToggle
     libnotify # notify-send, used by the shell and the F12 test bind
     quickshell # `qs` — see the let block above
     # ── Display arranging.
