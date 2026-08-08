@@ -176,7 +176,7 @@ through `variables.lua`, overridden by `~/.config/caelestia/hypr-vars.lua`
 | `SUPER+N` `+K` | sidebar, show all panels |
 | `SUPER+L` / `SUPER+SHIFT+L` | lock / suspend |
 | `Print` / `SUPER+SHIFT+S` | screenshot (full / freeze-region) |
-| `SUPER+V` / `SUPER+.` | clipboard / emoji |
+| `SUPER+V` / `SUPER+.` | clipboard (auto-pastes via ydotool CTRL+V; copy-only in terminals) / emoji |
 | `SUPER+SHIFT+C` | colour picker |
 | `CTRL+ALT+Del` | session menu |
 | `CTRL+SUPER+ALT+R` | restart shell |

@@ -325,6 +325,28 @@ in {
       -- all binds for the combo, and hypr-user.lua runs after keybinds.lua so
       -- the upstream bind already exists by this point.
       hl.unbind("SUPER + W")
+
+      -- Rebind SUPER+V: pick from the clipboard list AND paste in one step.
+      --
+      -- Upstream (keybinds.lua:174) runs `caelestia clipboard`, which only
+      -- wl-copies the picked entry — you still need CTRL+V afterwards. This
+      -- appends a synthesised CTRL+V via ydotool (daemon + uinput group
+      -- already set up in modules/hyprland-desktop.nix), so the entry lands
+      -- directly in the focused input. The && chain keeps every upstream
+      -- behaviour: pkill-fuzzel toggle-close short-circuits the ||, and a
+      -- cancelled picker (Esc) exits non-zero so nothing is pasted. wl-copy
+      -- forks only after buffering the data, and the sleep gives fuzzel time
+      -- to close and Hyprland to return focus to the previous window.
+      --
+      -- Caveat: the keystroke is CTRL+V, which terminals don't treat as
+      -- paste (foot wants CTRL+SHIFT+V) — in a terminal it falls back to
+      -- the old copy-only behaviour and you paste manually.
+      hl.unbind("SUPER + V")
+      hl.bind(
+          "SUPER + V",
+          hl.dsp.exec_cmd("pkill fuzzel || (caelestia clipboard && sleep 0.2 && ydotool key 29:1 47:1 47:0 29:0)")
+      )
+
       hl.bind("SUPER + SHIFT + P", hl.dsp.global("caelestia:nexus"))
       hl.bind("SUPER + CTRL + up", hl.dsp.exec_cmd("brightnessctl -d acer_ec::kbd_backlight set +10%"), { repeating = true })
       hl.bind("SUPER + CTRL + down", hl.dsp.exec_cmd("brightnessctl -d acer_ec::kbd_backlight set 10%-"), { repeating = true })
