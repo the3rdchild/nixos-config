@@ -470,6 +470,54 @@ in {
       )
     );
 
+  # ── Idle behaviour (dim / lock / suspend), merged into shell.json.
+  #
+  # shell.json is one of the mutable configs: the shell auto-saves it whenever
+  # a nexus setting changes (RootConfig::saveToFile), so it CANNOT be a
+  # home-manager store symlink (that read-only trap is why mutableConfigs
+  # exists). Instead this activation merges our `general.idle` object into
+  # the live file at rebuild time; the shell's QFileSystemWatcher picks the
+  # change up without a restart, and its own saves preserve these keys
+  # (they're known properties — once loaded they're written back as-is).
+  #
+  # Why the shell and not logind/hypridle: IdleMonitors.qml already keys idle
+  # actions off UPower's onBattery, which is exactly the AC/battery split
+  # requested here. `inhibitWhenCharging` disables every idle monitor while
+  # on AC, so AC gets no dim, no lock and no suspend. On battery:
+  #   5 min  — dim the panel to 0 (brightnessctl -s/-r save+restore, so the
+  #            previous brightness comes back on activity)
+  #   30 min — lock
+  #   60 min — `systemctl suspend` (lockBeforeSleep locks the session first;
+  #            logind's IdleAction stays "ignore", modules/power.nix, so
+  #            nothing double-sleeps)
+  home.activation.caelestiaShellIdle =
+    lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+      shellJson="${config.xdg.configHome}/caelestia/shell.json"
+      run mkdir -p "$(dirname "$shellJson")"
+      [ -s "$shellJson" ] || echo '{}' > "$shellJson"
+      ${pkgs.jq}/bin/jq --argjson idle '${builtins.toJSON {
+        lockBeforeSleep = true;
+        inhibitWhenAudio = true;
+        inhibitWhenCharging = true;
+        timeouts = [
+          {
+            timeout = 300;
+            idleAction = [ "brightnessctl" "-s" "set" "0" ];
+            returnAction = [ "brightnessctl" "-r" ];
+          }
+          {
+            timeout = 1800;
+            idleAction = "lock";
+          }
+          {
+            timeout = 3600;
+            idleAction = [ "systemctl" "suspend" ];
+          }
+        ];
+      }}' '.general.idle = $idle' "$shellJson" > "$shellJson.tmp" \
+        && mv "$shellJson.tmp" "$shellJson"
+    '';
+
   # ── Firefox chrome theme.
   #
   # Firefox profile directories are named with a random prefix, so the

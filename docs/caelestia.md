@@ -193,6 +193,22 @@ store symlink and changes will be lost.
 
 ---
 
+## Power & idle
+
+Two layers, two files:
+
+- **Buttons & lid** — `modules/power.nix` (logind). Power button (short and
+  long press), sleep/hibernate keys and lid close all do nothing. The ~4s
+  hardware hard-off still works — that's the EC, below the OS. Manual sleep
+  (`SUPER+SHIFT+L`) is unaffected.
+- **Timed idle** — `general.idle` in shell.json, merged in by the
+  `caelestiaShellIdle` activation in `home/caelestia.nix` (shell.json is
+  mutable — the shell auto-saves it — so it's a jq merge, not a symlink).
+  On AC nothing happens (`inhibitWhenCharging`). On battery: 5 min dims the
+  panel to 0 (restores on activity), 30 min locks, 60 min suspends.
+
+---
+
 ## Rebuilding
 
 > **`/etc/nixos` is a manual copy of this repo, not a symlink.**
