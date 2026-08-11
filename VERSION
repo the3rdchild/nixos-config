@@ -1,1 +1,1 @@
-5.1-stable: load i915 and nvidia modules in initrd to fix intermittent boot hang
+5.2-stable: 98799b...aa8841f92a1, load only i915 in initrd to fix initrd boot deadlock
