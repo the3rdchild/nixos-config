@@ -480,6 +480,29 @@ in {
       -- SUPER+SHIFT+K on-screen keyboard.
       hl.bind("SUPER + SHIFT + K", hl.dsp.exec_cmd("osk-toggle"))
 
+      -- SUPER+SHIFT+Z → Zen browser, SUPER+SHIFT+V → VS Code.
+      --
+      -- Both combos were completely free: `hyprctl binds` listed nothing on Z
+      -- or V at modmask 65, and upstream keybinds.lua never uses either — so no
+      -- unbind is needed, unlike SUPER+W/SUPER+V above. Note this does NOT
+      -- collide with the SUPER+V clipboard bind: Hyprland matches modmasks
+      -- exactly, so 64 (SUPER) and 65 (SUPER+SHIFT) are separate binds.
+      --
+      -- Plain exec, not the launch/focus/close toggle that SUPER+B and
+      -- SUPER+SHIFT+K use. Those drive single-window utility panels where
+      -- closing on a third press is the point; an editor or browser must never
+      -- be closed by a keybind. Both apps handle re-invocation themselves —
+      -- Zen remotes into the running instance (Firefox-derived), and `code`
+      -- hands off to the existing window over its IPC socket.
+      --
+      -- Zen is the user flatpak app.zen_browser.zen (see home/app-limits.nix
+      -- for its memory cap), launched via `flatpak run` rather than the
+      -- ~/.local/share/flatpak/exports/bin wrapper so the bind does not depend
+      -- on that export dir being in the compositor's inherited PATH.
+      -- `code` comes from modules/package.nix, on the system profile.
+      hl.bind("SUPER + SHIFT + Z", hl.dsp.exec_cmd("flatpak run app.zen_browser.zen"))
+      hl.bind("SUPER + SHIFT + V", hl.dsp.exec_cmd("code"))
+
       -- Render the OSK beneath the shell's panels. The wvkbd override in the
       -- Nix let block moves it from the overlay level down to `top`, where
       -- caelestia's own surfaces live; this decides who wins inside that level.
