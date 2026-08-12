@@ -82,6 +82,32 @@
       withX11 = false;
       withI3 = false;
     }).withModules [ pkgs.qt6.qtimageformats ];
+  # ── The version string nexus → About reports.
+  #
+  # Upstream's nix/default.nix hardcodes `version = "1.0.0"` and hands it to
+  # CMake as -DVERSION, which becomes CAELESTIA_VERSION, which is exactly what
+  # AboutPage.qml prints via CUtils::version(). It is a placeholder they never
+  # wired to the release tag, so every Nix build of the shell claims 1.0.0 no
+  # matter which version it actually is — the About page was not reporting a
+  # failed update.
+  #
+  # It has to be supplied here rather than left out: CMakeLists.txt only falls
+  # back to `git describe --tags` when VERSION is undefined, and the store copy
+  # has no .git, so an undefined VERSION is a FATAL_ERROR rather than a guess.
+  #
+  # Read out of flake.lock instead of written literally, so it cannot drift from
+  # the tag in flake.nix on the next bump. Falls back to upstream's own
+  # placeholder if the input is ever pointed at a branch instead of a tag —
+  # CMake's project(VERSION) rejects anything non-numeric, so "main" would be a
+  # build failure rather than a cosmetic wrong answer.
+  shellRef =
+    (builtins.fromJSON (builtins.readFile ../flake.lock)).nodes.caelestia-shell.original.ref
+      or "";
+  shellVersion =
+    if builtins.match "v?[0-9]+(\\.[0-9]+)*" shellRef != null
+    then lib.removePrefix "v" shellRef
+    else "1.0.0";
+
   # ── The shell, with a Display page added to nexus.
   #
   # Upstream stubbed this page out and never built it — PageRegistry.qml still
@@ -101,6 +127,12 @@
   shellSrc = pkgs.runCommand "caelestia-shell-src-display" { } ''
     cp -r ${inputs.caelestia-shell} $out
     chmod -R u+w $out
+
+    # See shellVersion above — replaces upstream's hardcoded placeholder with
+    # the tag this is actually built from. --replace-fail so an upstream change
+    # to that line surfaces here instead of silently restoring "1.0.0".
+    substituteInPlace $out/nix/default.nix \
+      --replace-fail 'version = "1.0.0";' 'version = "${shellVersion}";'
 
     cp ${./caelestia/shell/services/Monitors.qml} $out/services/Monitors.qml
     mkdir -p $out/modules/nexus/pages/display

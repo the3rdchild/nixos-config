@@ -45,9 +45,9 @@ PageBase {
                 last: index === monitorList.count - 1
 
                 icon: Monitors.isInternal(modelData) ? "laptop" : modelData.mirrorOf && modelData.mirrorOf !== "none" ? "content_copy" : "monitor"
-                label: Monitors.labelFor(modelData)
+                text: Monitors.labelFor(modelData)
 
-                status: {
+                subtext: {
                     if (off)
                         return qsTr("%1 — off").arg(modelData.name);
                     if (modelData.mirrorOf && modelData.mirrorOf !== "none")
@@ -98,15 +98,15 @@ PageBase {
         NavRow {
             first: true
             icon: "splitscreen_right"
-            label: qsTr("Extend to the right")
-            status: qsTr("External displays placed right of this screen")
+            text: qsTr("Extend to the right")
+            subtext: qsTr("External displays placed right of this screen")
             onClicked: Monitors.apply(Monitors.presetExtend(true), true)
         }
 
         NavRow {
             icon: "splitscreen_left"
-            label: qsTr("Extend to the left")
-            status: qsTr("External displays placed left of this screen")
+            text: qsTr("Extend to the left")
+            subtext: qsTr("External displays placed left of this screen")
             onClicked: Monitors.apply(Monitors.presetExtend(false), true)
         }
 
@@ -131,16 +131,16 @@ PageBase {
 
         NavRow {
             icon: "laptop"
-            label: qsTr("This screen only")
-            status: qsTr("Turn off external displays")
+            text: qsTr("This screen only")
+            subtext: qsTr("Turn off external displays")
             onClicked: Monitors.apply(Monitors.presetOnly(true), true)
         }
 
         NavRow {
             last: true
             icon: "monitor"
-            label: qsTr("External only")
-            status: qsTr("Turn off the built-in screen")
+            text: qsTr("External only")
+            subtext: qsTr("Turn off the built-in screen")
             onClicked: Monitors.apply(Monitors.presetOnly(false), true)
         }
 
@@ -151,16 +151,16 @@ PageBase {
         NavRow {
             first: true
             icon: "save"
-            label: qsTr("Save current layout")
-            status: qsTr("Reapplied on every Hyprland reload")
+            text: qsTr("Save current layout")
+            subtext: qsTr("Reapplied on every Hyprland reload")
             onClicked: Monitors.persist(Monitors.specs())
         }
 
         NavRow {
             last: true
             icon: "restart_alt"
-            label: qsTr("Forget saved layout")
-            status: qsTr("Fall back to automatic placement at highest refresh rate")
+            text: qsTr("Forget saved layout")
+            subtext: qsTr("Fall back to automatic placement at highest refresh rate")
             onClicked: Monitors.forget()
         }
 

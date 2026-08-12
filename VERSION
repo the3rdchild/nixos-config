@@ -1,1 +1,1 @@
-5.3-testing: drop old system generations
+5.5-stable: bump shell to v2.3.0, fix About version reporting

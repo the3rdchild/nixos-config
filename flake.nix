@@ -20,8 +20,20 @@
     # homeManagerModules.default (-> programs.caelestia) and pins its own
     # quickshell, which MUST be the git version — nixpkgs' tagged
     # quickshell is too old to build it.
+    #
+    # Pinned to a release tag, not `main`. home/caelestia.nix patches five
+    # upstream files with --replace-fail anchors and adds a nexus Display page
+    # written against upstream's own row components, so every bump has to be
+    # read before it is taken — a tag is a thing you can diff against, a moving
+    # branch is not. Reference/release holds the extracted tree of the pinned
+    # tag (REVISION matches the rev below) for exactly that check.
+    #
+    # The tag string here is also what nexus → About reports: home/caelestia.nix
+    # reads `ref` back out of flake.lock to override upstream's hardcoded
+    # `version = "1.0.0"` placeholder. Changing this line and re-locking is
+    # enough; there is no second copy of the version to keep in sync.
     caelestia-shell = {
-      url = "github:caelestia-dots/shell";
+      url = "github:caelestia-dots/shell/v2.3.0";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
