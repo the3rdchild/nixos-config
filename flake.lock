@@ -3,8 +3,8 @@
     "acer-ec": {
       "flake": false,
       "locked": {
-        "lastModified": 1786510606,
-        "narHash": "sha256-R7M59TbwL4kLFhcMmt6jC+f9OE7tTT/a2wPxiAe3lvY=",
+        "lastModified": 1786511535,
+        "narHash": "sha256-3CN+9XgF5V0paQtFFPAKeKiGqRo7r6axvP+v9HL7TjY=",
         "path": "/mnt/doc/acer-ec",
         "type": "path"
       },
