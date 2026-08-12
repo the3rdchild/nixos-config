@@ -40,9 +40,17 @@ in
 
   # Fan profile lives in a raw kobject, not a udev device, so tmpfiles has to
   # relax it. Lets the waybar module switch profiles without a sudo prompt.
+  #
+  # fan1_duty_set is deliberately NOT here. SCMD 0x68 carries both duties and
+  # the EC honours them indefinitely on this firmware, so a write to fan1 can
+  # stop the CPU fan outright with nothing to catch it — that one stays root.
+  # fan2 is the GPU fan and is safe to hand to the desktop; fan_auto is the
+  # way back from any manual duty, so it has to be at least as reachable as
+  # the writes it undoes.
   systemd.tmpfiles.rules = [
     "z /sys/kernel/acer_fanctl/profile 0664 root video -"
     "z /sys/kernel/acer_fanctl/fan2_duty_set 0664 root video -"
+    "z /sys/kernel/acer_fanctl/fan_auto 0664 root video -"
   ];
 
   # Let members of "video" set keyboard backlight without root.
