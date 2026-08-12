@@ -307,19 +307,43 @@ let
     guard="/run/wrappers/bin/sudo -n ${portal-guard}/bin/portal-guard"
 
     # Long enough to find the login page, fumble the password, and read the
-    # terms nobody reads. Override with PORTAL_TTL_MIN for a slow portal.
+    # terms nobody reads.
+    #
+    # The TTL used to be PORTAL_TTL_MIN only, which was a bad interface on this
+    # machine: the login shell is fish, and fish rejects the `VAR=x cmd` prefix
+    # outright —
+    #
+    #   fish: Unsupported use of '='. In fish, please use 'set PORTAL_TTL_MIN 1'.
+    #
+    # so the documented way to change the timeout did not work in the shell it
+    # was documented for. It is a positional argument now and the env var is
+    # kept only as a fallback. `env PORTAL_TTL_MIN=1 portal …` still works too.
     ttl_min=''${PORTAL_TTL_MIN-20}
 
     die() { echo "portal: $*" >&2; exit 1; }
 
     case "''${1-status}" in
       on|up)
-        iface=''${2-}
-        if [ -z "$iface" ]; then
+        shift
+        # Both remaining arguments are optional and order does not matter: an
+        # all-digits one is minutes, anything else is an interface name. No
+        # interface is called "45" and no timeout is called "wlp5s0", so this
+        # cannot be ambiguous, and it saves having to remember which comes
+        # first at the exact moment you are standing in a lobby with no DNS.
+        for a in "$@"; do
+          case "$a" in
+            "")        ;;
+            *[!0-9]*)  iface=$a ;;
+            *)         ttl_min=$a ;;
+          esac
+        done
+
+        if [ -z "''${iface-}" ]; then
           # Lowest-metric default route: the link actually carrying traffic.
           iface=$($ip -4 route show default | $sort -k9 -n | $head -1 | $awk '{print $5}')
         fi
         [ -n "$iface" ] || die "no default route — pass the interface: portal on wlp5s0"
+        [ "$ttl_min" -gt 0 ] 2>/dev/null || die "minutes must be a positive number, got: $ttl_min"
 
         resolvers=$($nmcli dev show "$iface" 2>/dev/null \
           | $grep -E '^IP[46]\.DNS\[' | $sed 's/.*: *//')
@@ -376,7 +400,9 @@ let
         ;;
 
       *)
-        echo "usage: portal [on [iface]|off|status]   (PORTAL_TTL_MIN=$ttl_min)" >&2
+        echo "usage: portal [on [iface] [minutes]|off [iface]|status]" >&2
+        echo "       portal on wlp5s0 45   # 45-minute window on a slow portal" >&2
+        echo "       default window: $ttl_min min" >&2
         exit 2
         ;;
     esac
