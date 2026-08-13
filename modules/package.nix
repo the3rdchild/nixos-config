@@ -77,6 +77,7 @@
     picocom
     screen
     tailscale
+    OpenSSL
   ];
 
   programs.nix-ld.enable = true;
