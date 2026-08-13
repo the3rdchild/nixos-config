@@ -238,6 +238,31 @@ import qs.modules.nexus.pages.display' \
     substituteInPlace $out/components/controls/Menu.qml \
       --replace-fail $'    enabled: expanded\n    hoverEnabled: expanded\n' \
         $'    enabled: expanded\n    hoverEnabled: expanded\n    visible: opacity > 0\n'
+
+    # ── Name the machine, not the compositor.
+    #
+    # SysInfo.wm (utils/SysInfo.qml) is nothing but XDG_CURRENT_DESKTOP, so
+    # every surface that prints it just says "Hyprland" — which the bar already
+    # makes obvious. Both of its consumers are replaced with a constant here.
+    # Neither has a Config binding, so patching is the only way in.
+    #
+    # 1. modules/dashboard/dash/User.qml — the speech bubble beside the avatar,
+    #    labelled `SysInfo.wm + "..."`. Those trailing dots are a literal string
+    #    upstream appends for the speech-bubble look, not Text.ElideRight
+    #    truncating a longer name, so the whole expression goes.
+    #
+    # 2. modules/lock/Fetch.qml — the "WM  :" line of the neofetch-style block
+    #    on the lock screen. Only the interpolation is replaced; the label and
+    #    its two-space padding stay, because the surrounding lines (OS/USER/UP/
+    #    BATT) are column-aligned by that padding in a MonoText.
+    #
+    # --replace-fail on both, so an upstream rewrite of either surfaces here
+    # instead of silently restoring "Hyprland".
+    substituteInPlace $out/modules/dashboard/dash/User.qml \
+      --replace-fail 'text: SysInfo.wm + "..."' 'text: "Noouoops"'
+
+    substituteInPlace $out/modules/lock/Fetch.qml \
+      --replace-fail 'WM  : ''${SysInfo.wm}' 'WM  : Hyprland'
   '';
 
   # Rebuild from the patched tree rather than overriding the flake's package:
