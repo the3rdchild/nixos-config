@@ -402,7 +402,8 @@ in {
 
     # Read by the app, never written by it — safe as store symlinks.
     "foot/foot.ini".source = "${dots}/foot/foot.ini";
-    "fastfetch/config.jsonc".source = "${dots}/fastfetch/config.jsonc";
+    # Our own fastfetch config, no longer upstream's (see home/fastfetch/).
+    "fastfetch/config.jsonc".source = ./fastfetch/config.jsonc;
 
     # User overrides, merged over hypr/variables.lua by hyprland.lua.
     # Upstream only creates this as an empty stub, so owning it is free.

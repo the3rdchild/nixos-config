@@ -13,20 +13,50 @@
             "key": "╭───────────────────────────────────╮"
         },
         {
+            "type": "os",
+            "key": "│ {$4}󰻀{$1}  os    ",
+            "format": "{$4}{pretty-name>22}{$1} │"
+        },
+        {
+            "type": "host",
+            "key": "│ {$2}󰌢{$1}  host  ",
+            "format": "{$2}{name>22}{$1} │"
+        },
+        {
             "type": "kernel",
             "key": "│ {$2}{$1}  kernel",
             "format": "{$2}{release>22}{$1} │"
         },
         {
             "type": "command",
-            "key": "│   uptime",
+            "key": "│ 󰥔  uptime",
             "text": "uptime -p | cut -d ' ' -f 2-",
             "format": "{>22} │"
+        },
+        {
+            "type": "packages",
+            "key": "│   pkgs  ",
+            "format": "{all>22} │"
         },
         {
             "type": "shell",
             "key": "│ {$2}{$1}  shell ",
             "format": "{$2}{pretty-name>22}{$1} │"
+        },
+        {
+            "type": "terminal",
+            "key": "│ {$2}󰆍{$1}  term  ",
+            "format": "{$2}{pretty-name>22}{$1} │"
+        },
+        {
+            "type": "cpu",
+            "key": "│ {$2}󰻠{$1}  cpu   ",
+            "format": "{$2}{name>22}{$1} │"
+        },
+        {
+            "type": "gpu",
+            "key": "│ {$2}󰢮{$1}  gpu   ",
+            "format": "{$2}{name>22}{$1} │"
         },
         {
             "type": "command",
@@ -35,26 +65,10 @@
             "format": "{$3}{>22}{$1} │"
         },
         {
-            "type": "packages",
-            "key": "│   pkgs  ",
-            "format": "{all>22} │"
-        },
-        {
             "type": "command",
-            "key": "│ {$2}{$1}  user  ",
-            "text": "echo $USER",
-            "format": "{$2}{>22}{$1} │"
-        },
-        {
-            "type": "command",
-            "key": "│   hname ",
-            "text": "hostnamectl hostname",
-            "format": "{>22} │"
-        },
-        {
-            "type": "os",
-            "key": "│ {$4}󰻀{$1}  distro",
-            "format": "{$4}{pretty-name>22}{$1} │"
+            "key": "│ {$3}󰾴{$1}  swap  ",
+            "text": "free -m | awk 'NR==3{printf \"%.2f GiB / %.2f GiB\",$3/1024,$2/1024}'",
+            "format": "{$3}{>22}{$1} │"
         },
         {
             "type": "custom",
