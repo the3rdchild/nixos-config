@@ -1,4 +1,4 @@
-{ config, inputs, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 
 let
   # The driver tree lives in-repo under Reference/, so this is a plain relative
@@ -15,6 +15,20 @@ let
     { };
 
   kbdDev = "acer_ec::kbd_backlight";
+
+  # ── Keyboard backlight colour.
+  #
+  # "R G B", each 0-255, written to the LED's multi_intensity on boot. The EC
+  # holds the colour itself and nothing on the Linux side used to set it, so it
+  # simply kept whatever was written last — by Acer Control Center under
+  # Windows, or by a previous boot — and reverted to the firmware default
+  # whenever the EC lost power. That is why it turned red on its own. Setting
+  # it here makes the colour survive power cycles.
+  #
+  # null leaves the EC's current colour alone (the driver skips its colour
+  # command entirely while multi_intensity is 0 0 0), which is the old
+  # brightness-only behaviour.
+  kbdColour = "0 0 255";
 
   # brightnessctl has no toggle; -s saves the current level, -r restores it.
   acer-kbd-toggle = pkgs.writeShellScriptBin "acer-kbd-toggle" ''
@@ -150,10 +164,17 @@ in
   # module (kernel updates, manual insmod) leaves it holding a stale handle and
   # Plasma's slider silently stops working. Restarting it on device add fixes
   # that for good.
+  # multi_intensity gets the same treatment as brightness so colour is settable
+  # without root, and is seeded from kbdColour on device add. ATTR{} assignment
+  # runs before the RUN+= chmod, so the seed does not depend on the permission
+  # change having landed — udev writes it as root either way.
   services.udev.extraRules = ''
     ACTION=="add", SUBSYSTEM=="leds", KERNEL=="${kbdDev}", \
-      RUN+="${pkgs.coreutils}/bin/chgrp video /sys/class/leds/%k/brightness", \
+      ${lib.optionalString (kbdColour != null) ''ATTR{multi_intensity}="${kbdColour}", \
+      ''}RUN+="${pkgs.coreutils}/bin/chgrp video /sys/class/leds/%k/brightness", \
       RUN+="${pkgs.coreutils}/bin/chmod g+w /sys/class/leds/%k/brightness", \
+      RUN+="${pkgs.coreutils}/bin/chgrp video /sys/class/leds/%k/multi_intensity", \
+      RUN+="${pkgs.coreutils}/bin/chmod g+w /sys/class/leds/%k/multi_intensity", \
       RUN+="${pkgs.systemd}/bin/systemctl --no-block try-restart upower.service"
   '';
 
