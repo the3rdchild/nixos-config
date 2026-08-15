@@ -263,6 +263,41 @@ import qs.modules.nexus.pages.display' \
 
     substituteInPlace $out/modules/lock/Fetch.qml \
       --replace-fail 'WM  : ''${SysInfo.wm}' 'WM  : Hyprland'
+
+    # ── Put the screenshot on the clipboard without a trip through swappy.
+    #
+    # modules/areapicker/Picker.qml save() writes the selection to a temp PNG,
+    # then forks on loader.clipboardOnly: true wl-copies it and notifies, false
+    # hands the file to `swappy -f` for annotation. The two are exclusive
+    # upstream, so the SUPER+SHIFT+S path (screenshotFreeze -> clipboardOnly
+    # false) leaves the clipboard untouched and swappy's own Copy button /
+    # CTRL+C is the only way to get the image out — an extra deliberate step
+    # for the common case, which is paste-it-somewhere-immediately.
+    #
+    # This adds the wl-copy to the swappy branch rather than switching the
+    # keybind to the existing caelestia:screenshotFreezeClip global, because
+    # that global suppresses swappy entirely and annotation is worth keeping.
+    # Both now run: the raw crop lands on the clipboard the moment the
+    # selection is released, and swappy still opens on top of it.
+    #
+    # Note this copies the RAW crop, not the annotated result — swappy re-copies
+    # over it if you annotate and press CTRL+C, which is the same key that
+    # already worked. Copying swappy's output instead would mean `-o -` piped
+    # to wl-copy, which defers the clipboard write until swappy exits and also
+    # fires on cancel; immediate-and-raw is the better default here.
+    #
+    # Applies to every entry point (Print, SUPER+SHIFT+S, SUPER+SHIFT+ALT+S,
+    # `caelestia screenshot`) — they all funnel through this one save().
+    #
+    # The wl-copy line is copied verbatim from the clipboardOnly branch above
+    # it, sh -c redirect included: execDetached takes an argv, not a shell
+    # line, so the `<` needs a real shell to mean anything.
+    #
+    # --replace-fail so an upstream rewrite of the swappy invocation surfaces
+    # here instead of silently dropping the auto-copy.
+    substituteInPlace $out/modules/areapicker/Picker.qml \
+      --replace-fail $'Quickshell.execDetached(["swappy", "-f", path]);' \
+        $'Quickshell.execDetached(["sh", "-c", "wl-copy --type image/png < " + path]);\n                Quickshell.execDetached(["swappy", "-f", path]);'
   '';
 
   # Rebuild from the patched tree rather than overriding the flake's package:
