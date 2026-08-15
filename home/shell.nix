@@ -39,6 +39,7 @@
       gbd = "git branch -d";
       gco = "git checkout";
       gsh = "git show";
+      sonora = "cd /mnt/doc/local-web-player && npm run start";
 
       l = "ls";
       ll = "ls -l";
