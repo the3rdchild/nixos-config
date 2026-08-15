@@ -5,16 +5,29 @@
 #include <linux/kernel.h>
 #include <linux/acpi.h>
 #include <linux/io.h>
+#include <linux/mutex.h>
 #include "acer_ec_core.h"
 
 #define SYSMEM_PHYS 0xFE0B0100UL
 #define SYSMEM_SIZE 0x100
+
+/*
+ * EC mailbox registers, in the ACPI EC address space (ports 0x62/0x66).
+ * These are the same FCMD/FDAT/FBUF registers the DSDT's ECMD method drives;
+ * writing FCMD last is what makes the EC consume the mailbox.
+ */
+#define EC_FCMD 0xF8
+#define EC_FDAT 0xF9
+#define EC_FBUF 0xFA
+#define EC_FBUF_LEN 4
 
 static void __iomem *sysmem_base;
 static acpi_handle wmi_handle;
 
 static bool sysmem_ok;
 static bool wmi_ok;
+
+static DEFINE_MUTEX(ecmd_lock);
 
 u8 ec_core_read8(u16 offset)
 {
@@ -31,6 +44,42 @@ u16 ec_core_read16(u16 offset)
 	return ioread16(sysmem_base + offset);
 }
 EXPORT_SYMBOL_GPL(ec_core_read16);
+
+/*
+ * Direct EC mailbox command.
+ *
+ * Unlike ec_core_scmd(), this bypasses the ACPI SCMD dispatcher and talks to
+ * the EC command interface directly. Needed for opcodes the DSDT never emits
+ * on this model — e.g. 0xCA (keyboard lighting), which SCMD 0x67 can only
+ * reach through sub-functions this EC firmware ignores.
+ */
+int ec_core_ecmd(u8 cmd, u8 dat, const u8 *buf, size_t len)
+{
+	size_t i;
+	int ret;
+
+	if (len > EC_FBUF_LEN)
+		return -EINVAL;
+
+	mutex_lock(&ecmd_lock);
+
+	for (i = 0; i < len; i++) {
+		ret = ec_write(EC_FBUF + i, buf[i]);
+		if (ret)
+			goto out;
+	}
+
+	ret = ec_write(EC_FDAT, dat);
+	if (ret)
+		goto out;
+
+	/* FCMD last — this is the trigger. */
+	ret = ec_write(EC_FCMD, cmd);
+out:
+	mutex_unlock(&ecmd_lock);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(ec_core_ecmd);
 
 int ec_core_scmd(u32 cmd, u8 b0, u8 b1, u8 b2, u8 b3)
 {

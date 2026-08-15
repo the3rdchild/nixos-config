@@ -7,8 +7,8 @@ acer_fanctl-objs := src/acer_fanctl.o
 obj-m += acer_ec_debug.o
 acer_ec_debug-objs := src/acer_ec_debug.o
 
-obj-m += acer_wmi_extras.o
-acer_wmi_extras-objs := src/acer_wmi_extras.o
+obj-m += acer_ec_kbd.o
+acer_ec_kbd-objs := src/acer_ec_kbd.o
 
 ccflags-y := -I$(src)/src
 

@@ -7,6 +7,7 @@
 #include <linux/debugfs.h>
 #include <linux/uaccess.h>
 #include <linux/io.h>
+#include <linux/acpi.h>
 #include "acer_ec_core.h"
 
 #define SYSMEM_PHYS 0xFE0B0100UL
@@ -14,6 +15,24 @@
 
 static void __iomem *sysmem_base;
 static struct dentry *df_root;
+static acpi_handle wmi_handle;
+
+/*
+ * Hotkey tracing. The DSDT's NEVT method only forwards hotkeys to the OS when
+ * HKDR is set (via SCMD 0x46); it then stores the event code in \_SB.WMI.EVNT
+ * and issues Notify(WMI, 0xD0). Without that handshake the EC swallows them.
+ */
+static void wmi_notify(acpi_handle handle, u32 event, void *data)
+{
+	unsigned long long evnt = 0;
+	acpi_status status;
+
+	status = acpi_evaluate_integer(handle, "EVNT", NULL, &evnt);
+	if (ACPI_FAILURE(status))
+		pr_info("notify 0x%02x (EVNT unreadable)\n", event);
+	else
+		pr_info("notify 0x%02x EVNT=0x%02llx\n", event, evnt);
+}
 
 static ssize_t reg8_read(struct file *filp, char __user *buf,
 			 size_t count, loff_t *pos)
@@ -76,6 +95,38 @@ static ssize_t dump_read(struct file *filp, char __user *buf,
 	return ret;
 }
 
+/*
+ * Raw SCMD injector — "<cmd> <args32>", both hex or decimal.
+ * args32 is passed as the 4-byte ACPI buffer, little-endian, matching how
+ * the DSDT does "ARGS = Arg2" on a Buffer.
+ *
+ * Example (keyboard backlight on, SCMD 0x67 fn=0x4 val=1):
+ *     echo "0x67 0x40010000" > /sys/kernel/debug/acer_ec/scmd
+ */
+static ssize_t scmd_write(struct file *filp, const char __user *buf,
+			  size_t count, loff_t *pos)
+{
+	char tmp[64];
+	u32 cmd, args;
+	int ret;
+
+	if (count >= sizeof(tmp))
+		return -EINVAL;
+	if (copy_from_user(tmp, buf, count))
+		return -EFAULT;
+	tmp[count] = '\0';
+
+	if (sscanf(tmp, "%i %i", &cmd, &args) != 2)
+		return -EINVAL;
+
+	ret = ec_core_scmd(cmd, args & 0xff, (args >> 8) & 0xff,
+			   (args >> 16) & 0xff, (args >> 24) & 0xff);
+	pr_info("scmd(0x%02x, 0x%08x) = %d\n", cmd, args, ret);
+
+	return ret ? ret : count;
+}
+
+static const struct file_operations scmd_fops = { .write = scmd_write };
 static const struct file_operations reg8_fops = { .read = reg8_read };
 static const struct file_operations reg16_fops = { .read = reg16_read };
 static const struct file_operations dump_fops = { .read = dump_read };
@@ -106,6 +157,21 @@ static int __init acer_ec_debug_init(void)
 	debugfs_create_file("reg16_E0", 0444, df_root, NULL, &reg16_fops);
 	debugfs_create_file("reg16_D4", 0444, df_root, NULL, &reg16_fops);
 	debugfs_create_file("dump", 0444, df_root, NULL, &dump_fops);
+	debugfs_create_file("scmd", 0200, df_root, NULL, &scmd_fops);
+
+	if (ACPI_SUCCESS(acpi_get_handle(NULL, "\\_SB_.WMI", &wmi_handle)) ||
+	    ACPI_SUCCESS(acpi_get_handle(NULL, "\\_SB.WMI", &wmi_handle))) {
+		if (ACPI_FAILURE(acpi_install_notify_handler(wmi_handle,
+							    ACPI_DEVICE_NOTIFY,
+							    wmi_notify, NULL))) {
+			pr_warn("could not hook \\_SB.WMI notifications\n");
+			wmi_handle = NULL;
+		} else {
+			pr_info("tracing \\_SB.WMI notifications\n");
+		}
+	} else {
+		wmi_handle = NULL;
+	}
 
 	pr_info("loaded — see /sys/kernel/debug/acer_ec/\n");
 	return 0;
@@ -113,6 +179,9 @@ static int __init acer_ec_debug_init(void)
 
 static void __exit acer_ec_debug_exit(void)
 {
+	if (wmi_handle)
+		acpi_remove_notify_handler(wmi_handle, ACPI_DEVICE_NOTIFY,
+					   wmi_notify);
 	debugfs_remove_recursive(df_root);
 	iounmap(sysmem_base);
 	pr_info("unloaded\n");

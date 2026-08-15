@@ -9,10 +9,9 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    acer-ec = {
-      url = "path:/mnt/doc/acer-ec";
-      flake = false;
-    };
+    # No acer-ec input: the driver tree is in-repo at
+    # Reference/acer-aspire-A715-79G/acer-ec and modules/acer-ec.nix reaches it
+    # by relative path. See the comment there.
 
     # ── Caelestia, in two halves.
     #

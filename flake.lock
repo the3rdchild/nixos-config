@@ -1,18 +1,5 @@
 {
   "nodes": {
-    "acer-ec": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1786511535,
-        "narHash": "sha256-3CN+9XgF5V0paQtFFPAKeKiGqRo7r6axvP+v9HL7TjY=",
-        "path": "/mnt/doc/acer-ec",
-        "type": "path"
-      },
-      "original": {
-        "path": "/mnt/doc/acer-ec",
-        "type": "path"
-      }
-    },
     "caelestia-cli": {
       "inputs": {
         "caelestia-shell": [
@@ -153,7 +140,6 @@
     },
     "root": {
       "inputs": {
-        "acer-ec": "acer-ec",
         "caelestia-dots": "caelestia-dots",
         "caelestia-shell": "caelestia-shell",
         "home-manager": "home-manager",

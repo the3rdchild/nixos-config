@@ -9,12 +9,16 @@
 #include <linux/hwmon.h>
 #include <linux/hwmon-sysfs.h>
 #include <linux/err.h>
+#include <linux/platform_device.h>
+#include <linux/platform_profile.h>
 #include "acer_ec_core.h"
 
 #define DRV_NAME "acer_fanctl"
 
 static struct kobject *fan_kobj;
 static struct device *hwmon_dev;
+static struct platform_device *pdev;
+static struct device *ppdev;
 
 static inline u16 raw_to_rpm(u16 raw)
 {
@@ -46,6 +50,8 @@ FAN_SHOW8(rinf_val, 0xDB)
 FAN_SHOW8(tmp_temp, 0x07)
 
 /* --- sysfs: profile (1-4) --- */
+static int profile_cur;
+
 static ssize_t profile_store(struct kobject *kobj, struct kobj_attribute *attr,
 			     const char *buf, size_t count)
 {
@@ -55,15 +61,41 @@ static ssize_t profile_store(struct kobject *kobj, struct kobj_attribute *attr,
 	if (val < 1 || val > 4) return -EINVAL;
 	ret = ec_core_scmd(0x69, BIT(val - 1), 0, 0, 0);
 	if (ret) return ret;
+	profile_cur = val;
 	return count;
 }
 
+/*
+ * The EC has no readback for the active profile, so we report what we last
+ * wrote. Seeded from profile_param at load time.
+ */
 static ssize_t profile_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
-	return sprintf(buf, "1=quiet 2=balanced 3=performance 4=gaming\n");
+	return sprintf(buf, "%d\n", profile_cur);
 }
 
-/* --- sysfs: fan2_duty_set (0-255) --- */
+/*
+ * --- sysfs: fan duty writes ---
+ *
+ * SCMD 0x68 carries BOTH duties in one command: byte0 = DUT1, byte1 = DUT2.
+ * There is no "leave this one alone" encoding — a byte of 0 means 0% duty,
+ * which stops that fan outright.
+ *
+ * Both stores used to pass 0 for the fan they were not addressing, so
+ * `echo 255 > fan2_duty_set` set the GPU fan to max AND stopped the CPU fan.
+ * Measured on this machine: DUT1 71 -> 0, RPM1 2003 -> 0, and it stayed
+ * stopped (package temperature reached 89 C) until the EC was made to
+ * reclaim the fan. The README's claim that the EC restores DUT1 within
+ * ~500ms does not hold on this firmware.
+ *
+ * So read the sibling fan's current duty back out of EC RAM and re-send it
+ * unchanged. This races the EC's own curve in principle, but the window is
+ * microseconds against a curve that moves on a multi-second cadence, and the
+ * worst case is one stale duty that the next auto update corrects.
+ *
+ * Note this makes the written fan MANUAL until something hands it back —
+ * write `fan_auto` (or `profile`) for that.
+ */
 static ssize_t fan2_duty_set_store(struct kobject *kobj, struct kobj_attribute *attr,
 				   const char *buf, size_t count)
 {
@@ -71,17 +103,20 @@ static ssize_t fan2_duty_set_store(struct kobject *kobj, struct kobj_attribute *
 	int ret = kstrtou32(buf, 0, &val);
 	if (ret) return ret;
 	if (val > 255) return -EINVAL;
-	ret = ec_core_scmd(0x68, 0, val, 0, 0);
+	ret = ec_core_scmd(0x68, ec_core_read8(0xCE), val, 0, 0);
 	if (ret) return ret;
 	return count;
 }
 
 /*
- * fan1_duty_set — EXPERIMENTAL.
- * Fan 1 (CPU) is EC-protected. SCMD 0x68 byte0 does not persist
- * because the EC firmware overwrites DUT1 within ~500ms.
- * This may be unlockable via the WINF register (0xDA) "OS takeover" bit.
- * Provided for research purposes; may have no effect.
+ * fan1_duty_set — EXPERIMENTAL, and the dangerous one.
+ *
+ * Fan 1 is the CPU fan. Upstream documents it as EC-protected and expected
+ * writes here to be overwritten within ~500ms; on this firmware they are not,
+ * so a low value really does stop the CPU fan and keep it stopped. Kept
+ * root-only (see the tmpfiles rules in the NixOS module, which deliberately
+ * relax fan2_duty_set but not this) precisely because there is no thermal
+ * interlock behind it.
  */
 static ssize_t fan1_duty_set_store(struct kobject *kobj, struct kobj_attribute *attr,
 				   const char *buf, size_t count)
@@ -90,8 +125,45 @@ static ssize_t fan1_duty_set_store(struct kobject *kobj, struct kobj_attribute *
 	int ret = kstrtou32(buf, 0, &val);
 	if (ret) return ret;
 	if (val > 255) return -EINVAL;
-	ret = ec_core_scmd(0x68, val, 0, 0, 0);
+	ret = ec_core_scmd(0x68, val, ec_core_read8(0xCF), 0, 0);
 	if (ret) return ret;
+	return count;
+}
+
+/*
+ * fan_auto — hand both fans back to the EC's own curve.
+ *
+ * There is no "auto" command in the EC interface; re-applying a profile is
+ * what drops manual duty. But the EC only re-asserts its curve when the
+ * profile actually CHANGES — re-sending the profile that is already active
+ * is a no-op. Measured: sitting at profile 4 with DUT2 pinned to 255, a
+ * second SCMD 0x69 for profile 4 left it pinned (8s, no movement), while
+ * switching to profile 2 released it within 2s.
+ *
+ * So bounce through a neighbouring profile and come straight back. No delay
+ * between the two commands is needed — the EC processes them in order and
+ * the release still happens; the intermediate profile is never observable in
+ * the fan curve.
+ *
+ * Any written value is accepted and ignored.
+ */
+static ssize_t fan_auto_store(struct kobject *kobj, struct kobj_attribute *attr,
+			      const char *buf, size_t count)
+{
+	int val = profile_cur;
+	int other;
+	int ret;
+
+	if (val < 1 || val > 4)
+		val = 2;
+	other = (val == 1) ? 2 : 1;
+
+	ret = ec_core_scmd(0x69, BIT(other - 1), 0, 0, 0);
+	if (ret) return ret;
+	ret = ec_core_scmd(0x69, BIT(val - 1), 0, 0, 0);
+	if (ret) return ret;
+
+	profile_cur = val;
 	return count;
 }
 
@@ -143,6 +215,7 @@ static struct kobj_attribute tmp_temp_attr = __ATTR_RO(tmp_temp);
 static struct kobj_attribute profile_attr = __ATTR_RW(profile);
 static struct kobj_attribute fan2_duty_set_attr = __ATTR_WO(fan2_duty_set);
 static struct kobj_attribute fan1_duty_set_attr = __ATTR_WO(fan1_duty_set);
+static struct kobj_attribute fan_auto_attr = __ATTR_WO(fan_auto);
 static struct kobj_attribute all_attr = __ATTR_RO(all);
 
 static struct attribute *attrs[] = {
@@ -161,6 +234,7 @@ static struct attribute *attrs[] = {
 	&profile_attr.attr,
 	&fan2_duty_set_attr.attr,
 	&fan1_duty_set_attr.attr,
+	&fan_auto_attr.attr,
 	&all_attr.attr,
 	NULL,
 };
@@ -205,6 +279,59 @@ static const struct attribute_group *acer_hwmon_groups[] = {
 	NULL
 };
 
+/*
+ * platform_profile bridge.
+ *
+ * Exposes the EC's four fan profiles through the standard kernel interface, so
+ * the power applet in Plasma/GNOME (via power-profiles-daemon) can switch them
+ * without any desktop-specific widget.
+ */
+static int acer_pp_set(struct device *dev, enum platform_profile_option profile)
+{
+	int val;
+
+	switch (profile) {
+	case PLATFORM_PROFILE_QUIET:               val = 1; break;
+	case PLATFORM_PROFILE_LOW_POWER:           val = 1; break;
+	case PLATFORM_PROFILE_BALANCED:            val = 2; break;
+	case PLATFORM_PROFILE_BALANCED_PERFORMANCE: val = 3; break;
+	case PLATFORM_PROFILE_PERFORMANCE:         val = 4; break;
+	default:                                   return -EOPNOTSUPP;
+	}
+
+	if (ec_core_scmd(0x69, BIT(val - 1), 0, 0, 0))
+		return -EIO;
+
+	profile_cur = val;
+	return 0;
+}
+
+static int acer_pp_get(struct device *dev, enum platform_profile_option *profile)
+{
+	switch (profile_cur) {
+	case 1: *profile = PLATFORM_PROFILE_QUIET; break;
+	case 3: *profile = PLATFORM_PROFILE_BALANCED_PERFORMANCE; break;
+	case 4: *profile = PLATFORM_PROFILE_PERFORMANCE; break;
+	default: *profile = PLATFORM_PROFILE_BALANCED; break;
+	}
+	return 0;
+}
+
+static int acer_pp_probe(void *drvdata, unsigned long *choices)
+{
+	set_bit(PLATFORM_PROFILE_QUIET, choices);
+	set_bit(PLATFORM_PROFILE_BALANCED, choices);
+	set_bit(PLATFORM_PROFILE_BALANCED_PERFORMANCE, choices);
+	set_bit(PLATFORM_PROFILE_PERFORMANCE, choices);
+	return 0;
+}
+
+static const struct platform_profile_ops acer_pp_ops = {
+	.probe = acer_pp_probe,
+	.profile_get = acer_pp_get,
+	.profile_set = acer_pp_set,
+};
+
 static int profile_param = 2;
 module_param(profile_param, int, 0444);
 MODULE_PARM_DESC(profile_param, "Default fan profile (1=quiet 2=balanced 3=performance 4=gaming)");
@@ -223,8 +350,10 @@ static int __init acer_fanctl_init(void)
 		return ret;
 	}
 
-	if (profile_param >= 1 && profile_param <= 4)
+	if (profile_param >= 1 && profile_param <= 4) {
 		ec_core_scmd(0x69, BIT(profile_param - 1), 0, 0, 0);
+		profile_cur = profile_param;
+	}
 
 	hwmon_dev = hwmon_device_register_with_groups(NULL, "acer_ec",
 						      NULL, acer_hwmon_groups);
@@ -234,12 +363,34 @@ static int __init acer_fanctl_init(void)
 		hwmon_dev = NULL;
 	}
 
+	pdev = platform_device_register_simple(DRV_NAME, PLATFORM_DEVID_NONE,
+					       NULL, 0);
+	if (IS_ERR(pdev)) {
+		pr_warn("platform device registration failed (%ld)\n",
+			PTR_ERR(pdev));
+		pdev = NULL;
+	} else {
+		ppdev = platform_profile_register(&pdev->dev, DRV_NAME, NULL,
+						  &acer_pp_ops);
+		if (IS_ERR(ppdev)) {
+			pr_warn("platform_profile registration failed (%ld)\n",
+				PTR_ERR(ppdev));
+			ppdev = NULL;
+		} else {
+			pr_info("platform_profile registered\n");
+		}
+	}
+
 	pr_info("loaded (profile=%d) - see /sys/kernel/acer_fanctl/\n", profile_param);
 	return 0;
 }
 
 static void __exit acer_fanctl_exit(void)
 {
+	if (ppdev)
+		platform_profile_remove(ppdev);
+	if (pdev)
+		platform_device_unregister(pdev);
 	if (hwmon_dev)
 		hwmon_device_unregister(hwmon_dev);
 	sysfs_remove_group(fan_kobj, &attr_group);

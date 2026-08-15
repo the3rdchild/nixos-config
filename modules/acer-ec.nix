@@ -1,7 +1,18 @@
 { config, inputs, pkgs, ... }:
 
 let
-  acer-ec = config.boot.kernelPackages.callPackage "${inputs.acer-ec}/nix/default.nix" { };
+  # The driver tree lives in-repo under Reference/, so this is a plain relative
+  # path rather than a flake input. It used to be `inputs.acer-ec`, a
+  # `path:/mnt/doc/acer-ec` input pointing outside the repo — which broke the
+  # moment that directory moved, and which also meant every driver edit needed
+  # a `nix flake update acer-ec` before it was picked up. A relative path has
+  # neither problem: it moves with the repo and edits take effect immediately.
+  #
+  # nix/default.nix does `src = lib.cleanSource ../.`, which resolves relative
+  # to its own file, so it still captures exactly the acer-ec subtree.
+  acer-ec = config.boot.kernelPackages.callPackage
+    ../Reference/acer-aspire-A715-79G/acer-ec/nix/default.nix
+    { };
 
   kbdDev = "acer_ec::kbd_backlight";
 
