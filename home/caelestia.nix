@@ -42,6 +42,15 @@
     # upstream fail loudly instead of silently keeping the gesture.
     substituteInPlace $out/hypr/hyprland/gestures.lua \
       --replace-fail $'hl.gesture({\n    fingers   = vars.gestureFingersMore,\n    direction = "down",\n    action    = function()\n        hl.exec_cmd(vars.sleepGestureCmd)\n    end,\n})' ""
+
+    # Night light off. execs.lua starts gammastep on every login, so the whole
+    # session goes amber after sunset. Only the autostart is dropped —
+    # gammastep stays in home.packages below, so running it by hand still
+    # works, and the geoclue agent on the line above stays with it: that is
+    # the location provider gammastep needs if it is ever wanted again.
+    substituteInPlace $out/hypr/hyprland/execs.lua \
+      --replace-fail $'\n    hl.exec_cmd("sleep 1 && gammastep")' "" \
+      --replace-fail '-- Location provider and night light' '-- Location provider'
   '';
 
   # Configs their own app rewrites at runtime. A nix-store symlink is
@@ -695,7 +704,8 @@ in {
     cliphist
     wl-clipboard
     trash-cli # `trash-empty 30` on session start
-    gammastep # night light
+    gammastep # night light — kept for manual use only, the execs.lua
+              # autostart is patched out in the dots derivation above
     geoclue2-with-demo-agent # location provider for gammastep
     gnome-keyring
     bluez # mpris-proxy, forwards BT media keys to MPRIS
