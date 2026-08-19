@@ -685,6 +685,39 @@ in {
           -- whole layout).
           hl.monitor({ output = "", mode = "highrr", position = "auto", scale = 1 })
       end
+
+      -- ── HyprMod's managed file.
+      --
+      -- The GTK settings GUI (see home.packages below) keeps every edit it
+      -- makes in ~/.config/hypr/hyprland-gui.lua and touches nothing else.
+      -- Loaded here, at the very end of the very last file Hyprland reads,
+      -- so its overrides win over upstream, over the binds above, and over
+      -- monitors.lua — which is the point of a live tweaking tool.
+      --
+      -- dofile, NOT the loadfile+pcall used for monitors.lua above, and the
+      -- difference is load-bearing. HyprMod's needs_setup() walks the
+      -- config's dofile/require chain looking for its own file; a loadfile
+      -- chunk executes but leaves no node in that walk. Miss it and the app
+      -- offers, on every launch, to append `require("hyprland-gui")` to
+      -- hyprland.lua itself — via an atomic write (tempfile + os.replace)
+      -- that would succeed, because `recursive = true` makes ~/.config/hypr
+      -- a real writable directory, and would REPLACE the home-manager store
+      -- symlink with a plain file. The next `nixos-rebuild switch` then
+      -- aborts with "existing file is in the way". Never accept that
+      -- dialog; this line is what stops it being offered.
+      --
+      -- io.open("a") first because dofile raises on a missing file, and the
+      -- file genuinely does not exist until the GUI has saved something.
+      -- pcall for the same reason monitors.lua is loaded defensively: a
+      -- half-written GUI save must not take the whole config, and with it
+      -- the session, down.
+      local guiFile = os.getenv("HOME") .. "/.config/hypr/hyprland-gui.lua"
+      local guiStub = io.open(guiFile, "a")
+      if guiStub then guiStub:close() end
+      local guiOk, guiErr = pcall(dofile, guiFile)
+      if not guiOk then
+          print("[hypr-user] hyprland-gui.lua failed to apply: " .. tostring(guiErr))
+      end
     '';
   };
 
@@ -725,6 +758,27 @@ in {
     nwg-displays
     wlr-randr # kept for scripting — `wlr-randr --output X --off` in a one-off
               # shell is still handier than a GUI. Not the arranger any more.
+
+    # ── HyprMod — a settings GUI for the compositor itself.
+    #
+    # From the flake input (not in nixpkgs). Reads caelestia's whole
+    # require() tree without complaint and applies changes live over
+    # `hyprctl eval` — it already knows `keyword` is rejected by the Lua
+    # parser, the same wall documented in the monitor section of
+    # hypr-user.lua above. Its edits land in hyprland-gui.lua, which that
+    # file dofiles last; nothing here is written by home-manager.
+    #
+    # Do NOT trust its Decoration page. Its reader re-executes variables.lua
+    # on every require() instead of caching the module the way Hyprland
+    # does, so the hypr-vars.lua merge hyprland.lua performs (it mutates the
+    # cached table in place) is invisible to it. It opens showing upstream's
+    # blur size 8 / passes 2 / shadows on, not the 4 / 1 / off set in
+    # hypr-vars.lua above — same story for cursorTheme, which it reads as
+    # upstream's sweet-cursors. It only writes what you actually edit, but
+    # anything saved from that page lands in a file that loads last and
+    # silently undoes the iGPU relief tuning.
+    inputs.hyprmod.packages.${pkgs.stdenv.hostPlatform.system}.default
+
     cliphist
     wl-clipboard
     trash-cli # `trash-empty 30` on session start

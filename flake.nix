@@ -43,6 +43,24 @@
       url = "github:caelestia-dots/caelestia";
       flake = false;
     };
+
+    # ── HyprMod, the GTK4 settings GUI for the compositor.
+    #
+    # Not in nixpkgs. The flake exports packages.default and its derivation
+    # wraps lua5_4 onto PATH, which its config reader needs to execute a
+    # Lua-mode config.
+    #
+    # Pinned by rev rather than tag on purpose: the Nix packaging landed
+    # AFTER the v0.4.0 tag — nix/hyprmod.nix and flake.nix don't exist at
+    # v0.4.0 at all — so there is no tag that can be built. A rev is still a
+    # thing you can diff against; re-pin it when bumping rather than letting
+    # `main` float, because the one thing that matters here (first-run setup
+    # wanting to write to hyprland.lua — see hypr-user.lua in
+    # home/caelestia.nix) is upstream behaviour that could change silently.
+    hyprmod = {
+      url = "github:BlueManCZ/hyprmod/c1edad16510538190f65cde0f27fc2825045ce04";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs = inputs@{ self, nixpkgs, home-manager, ... }: {

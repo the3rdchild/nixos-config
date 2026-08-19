@@ -84,6 +84,27 @@
         "type": "github"
       }
     },
+    "hyprmod": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1786171442,
+        "narHash": "sha256-uhJaXmPQhOGKvQLxqgJbtb9YIYJ/4Zd8aQNN5xpVduI=",
+        "owner": "BlueManCZ",
+        "repo": "hyprmod",
+        "rev": "c1edad16510538190f65cde0f27fc2825045ce04",
+        "type": "github"
+      },
+      "original": {
+        "owner": "BlueManCZ",
+        "repo": "hyprmod",
+        "rev": "c1edad16510538190f65cde0f27fc2825045ce04",
+        "type": "github"
+      }
+    },
     "m3shapes": {
       "flake": false,
       "locked": {
@@ -143,6 +164,7 @@
         "caelestia-dots": "caelestia-dots",
         "caelestia-shell": "caelestia-shell",
         "home-manager": "home-manager",
+        "hyprmod": "hyprmod",
         "nixpkgs": "nixpkgs"
       }
     }
