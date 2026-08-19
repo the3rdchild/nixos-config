@@ -614,6 +614,30 @@ in {
       -- Hyprland bump, flip the sign here — nothing else depends on it.
       hl.layer_rule({ match = { namespace = "wvkbd" }, order = -1 })
 
+      -- ── Kill the Hyprland splash text.
+      --
+      -- Hyprland draws one random line from its built-in NSplashes::SPLASHES
+      -- table onto its own background layer — the contributor credits,
+      -- "Thanks ThatOneCalculator!" / "Thanks fufexan!" and friends. It is
+      -- visible in the gap between the compositor coming up and caelestia
+      -- painting the wallpaper over the top of it, which is why it only ever
+      -- flashes just after logging in from SDDM.
+      --
+      -- upstream's hyprland/misc.lua already sets disable_hyprland_logo, but
+      -- the logo and the splash TEXT are two separate options and only the
+      -- first was covered — hence the leftover line at the bottom of the
+      -- screen. This is the other half.
+      --
+      -- Set from here rather than by patching misc.lua: hypr-user.lua runs
+      -- last and hl.config merges per key, so the rest of upstream's misc
+      -- block (background_color, the dpms keys, …) is left alone.
+      --
+      -- Note for anyone changing this at runtime: `hyprctl keyword` is
+      -- rejected under the Lua parser (see the monitor section below), so the
+      -- live equivalent is
+      --   hyprctl eval 'hl.config({ misc = { disable_splash_rendering = true } })'
+      hl.config({ misc = { disable_splash_rendering = true } })
+
       -- ── Display / monitor configuration.
       --
       -- Hyprland's Lua parser refuses `hyprctl keyword` outright ("keyword

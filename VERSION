@@ -1,1 +1,1 @@
-5.7.5-testing: hyprland enable upower and power-profiles-daemon for battery management
+5.8-stable: disable splash rendering to eliminate unwanted text during login
