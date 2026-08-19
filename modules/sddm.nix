@@ -50,10 +50,32 @@ in {
     ];
   };
 
+  # ── The greeter's mouse cursor.
+  #
+  # The greeter runs as the `sddm` system user, so the only icon path it can
+  # see is /run/current-system/sw/share/icons — never the per-user profile.
+  # bibata-cursors is installed by home-manager (../home/themes.nix), which
+  # puts it in /etc/profiles/per-user/noouoops and therefore out of reach:
+  # CursorTheme above was in fact never resolving, and plasma6 was quietly
+  # covering for it with breeze_cursors plus an xdg.icons fallback. Removing
+  # plasma6 took both away and left the login screen with no cursor at all.
+  #
+  # So: install the theme system-wide as well (cheap — the store path is
+  # shared with the home-manager copy, nothing is duplicated), and point the
+  # xdg.icons fallback at it for anything that ignores CursorTheme.
+  xdg.icons.fallbackCursorThemes = [ "Bibata-Modern-Ice" ];
+
+  # accounts-daemon is how SDDM resolves user avatars for the greeter's user
+  # list. plasma6 turned it on; restored here for the same reason as above.
+  services.accounts-daemon.enable = true;
+
   # The theme has to land in ThemeDir (/run/current-system/sw/share/sddm/themes)
   # to be found; extraPackages alone only covers the greeter's own runtime
   # path. No Qt module is listed alongside it — the sddm-astronaut derivation
   # propagates qtsvg / qtmultimedia / qtvirtualkeyboard itself, so the explicit
   # kdePackages.qtmultimedia that used to sit here was redundant.
-  environment.systemPackages = [ custom-sddm-astronaut ];
+  environment.systemPackages = [
+    custom-sddm-astronaut
+    pkgs.bibata-cursors
+  ];
 }
