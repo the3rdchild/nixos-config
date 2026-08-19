@@ -4,9 +4,11 @@
   #
   # logind is the *only* thing arbitrating button/lid actions on this machine:
   # the session is Hyprland (see ./package.nix) and there is no hypridle.
-  # plasma6 is enabled in ./service.nix but powerdevil never runs outside a
-  # Plasma session, so its (mutable, hand-edited) ~/.config/powerdevilrc has
-  # no effect here — everything below takes hold unconditionally.
+  # plasma6 has since been dropped from ./service.nix, so powerdevil is not
+  # installed at all any more. It never took effect here regardless (it only
+  # runs inside a Plasma session), so the stale, hand-edited
+  # ~/.config/powerdevilrc is now simply dead — everything below takes hold
+  # unconditionally.
   #
   # Timed idle behaviour (dim / lock / suspend) is a separate matter: that
   # lives in the caelestia shell's idle monitors, configured declaratively in

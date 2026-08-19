@@ -27,10 +27,18 @@
     steam
     # wireguard-ui removed — was a server-side peer manager (overkill for one
     # client tunnel) and its db/ under /etc/wireguard conflicted with wg-quick.
-    # The tunnel is now a plain NetworkManager connection, toggled from the
-    # Plasma network applet or `nmcli connection up wg0`.
+    # The tunnel is now a plain NetworkManager connection, brought up with
+    # `nmcli connection up wg0` (this used to name the Plasma network applet
+    # as the other option — that plasmoid never ran under Hyprland, and
+    # plasma6 is gone from ./service.nix now anyway).
     wireguard-tools # keeps the `wg` CLI for inspecting NM-managed tunnels
     qdirstat
+
+    # Kept deliberately after plasma6 was removed from ./service.nix — this is
+    # the file manager caelestia opens (fileExplorer in ../home/caelestia.nix).
+    # It stands alone fine: its own closure already carries breeze-icons,
+    # kiconthemes, kio-extras and qtsvg, so no Plasma session is involved.
+    kdePackages.dolphin
     cameractrls
     obs-studio
     vscode
@@ -78,6 +86,7 @@
     screen
     tailscale
     openssl
+    mission-center
   ];
 
   programs.nix-ld.enable = true;
