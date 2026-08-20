@@ -450,8 +450,14 @@ in
   #
   # Tailscale is unaffected: it configures its link (100.100.100.100 + ~ts.net
   # routing domains) directly over resolved's D-Bus API, not through NM, and a
-  # specific routing domain still beats the "~." default route below. wg0 is
-  # likewise untouched — it pushes no DNS.
+  # specific routing domain still beats the "~." default route below.
+  #
+  # wg0 is NOT untouched — an earlier version of this comment claimed it pushed
+  # no DNS, and that has not been true since the profile was imported from a
+  # wg0.conf carrying a `DNS =` line. NM installs it as a link scope with
+  # Domains="~." and Default Route: yes, so while the tunnel is up that one
+  # resolver wins for every name. That part is intended (the query rides inside
+  # the tunnel); what has to move with it is DoT — see wg0-dnsovertls-off below.
   #
   # Trade-off: captive-portal wifi (hotel/airport/campus guest) will not
   # resolve, because nothing here lets a local network supply a resolver.
@@ -651,6 +657,57 @@ in
       OnUnitActiveSec = "1d";
     };
   };
+
+  # ── wg0: DoT off on that link, re-applied on every activation.
+  #
+  # The failure this fixes: bring the tunnel up and every lookup dies. wg0's
+  # profile carries a `DNS =` line, so NM hands resolved a link scope with
+  # Domains="~." and Default Route: yes — that link now answers for every name
+  # instead of the global Cloudflare config. But the global DNSOverTLS="true"
+  # propagates *down* to it, and the VPN's resolver only speaks plaintext :53.
+  # resolved dials 853, gets nothing, and DNS is dead for as long as wg0 is up.
+  # `resolvectl dnsovertls wg0 no` clears it instantly — which is exactly why
+  # this exists: that command is runtime-only and does not survive a reconnect.
+  #
+  # This does not weaken the design, and in particular is NOT the same as
+  # relaxing the global setting to "opportunistic". Global stays strict, so an
+  # ISP hijacking port 53 still meets a closed door. The exemption is scoped to
+  # one link whose packets are already encrypted by WireGuard before anyone
+  # else can see them — the same reasoning that gives wg0 an `-o wg0 -j RETURN`
+  # hole in dns-leak-guard. Opportunistic-globally would instead let *every*
+  # link silently downgrade to plaintext, and on this machine it would not even
+  # buy a working fallback: the downgraded packet leaves over wlp5s0 and
+  # dns-leak-guard REJECTs it.
+  #
+  # Why a dispatcher and not a line in the `vpn` helper: the tunnel also comes
+  # up from the caelestia network applet and from `nmcli connection up wg0`
+  # directly, and resolved drops per-link settings every time NM reconfigures
+  # the interface. NM runs dispatcher scripts as root once activation has
+  # finished — after the DNS push, which is the ordering this needs.
+  networking.networkmanager.dispatcherScripts = [
+    {
+      type = "basic";
+      source = pkgs.writeShellScript "wg0-dnsovertls-off" ''
+        iface="$1"
+        action="$2"
+
+        [ "$iface" = wg0 ] || exit 0
+        # "up" is what a NM-managed wireguard *device* fires; "vpn-up" belongs
+        # to plugin VPNs and costs nothing to accept in case the profile is
+        # ever re-imported that way.
+        case "$action" in
+          up|vpn-up) ;;
+          *) exit 0 ;;
+        esac
+
+        ${pkgs.systemd}/bin/resolvectl dnsovertls wg0 no
+        # Anything attempted during the DoT window is cached as a failure;
+        # without this the first lookups after connecting still come back empty.
+        ${pkgs.systemd}/bin/resolvectl flush-caches
+        echo "wg0: DNSOverTLS disabled on link (tunnel resolver is plaintext :53)"
+      '';
+    }
+  ];
 
   # ── WARP must NOT auto-connect.
   #
