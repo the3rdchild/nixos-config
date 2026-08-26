@@ -707,6 +707,128 @@ in
         echo "wg0: DNSOverTLS disabled on link (tunnel resolver is plaintext :53)"
       '';
     }
+
+    # ── Drop an IPv6 default route the link cannot actually source from.
+    #
+    # The failure this fixes: Discord voice hangs forever on "DTLS Connecting".
+    # Text chat, the gateway websocket, every HTTPS request — all fine. Only
+    # WebRTC breaks, and it breaks silently.
+    #
+    # The state that causes it, as found on the home wifi (192.168.100.0/24,
+    # Huawei HG8245H):
+    #
+    #   $ ip -br a
+    #   wlp5s0      UP   192.168.100.84/24 fe80::2c19:b229:9ea5:1075/64
+    #   tailscale0  UNK  100.117.13.8/32 fd7a:115c:a1e0::5e37:d09/128
+    #   $ ip -6 route show
+    #   default via fe80::1 dev wlp5s0 proto ra metric 600
+    #
+    # The router advertises a default route but no usable global prefix ever
+    # lands, so wlp5s0 has link-local only. The kernel has accept_ra=0 here —
+    # NM does RA in userspace and installed that route itself, which is why no
+    # net.ipv6.conf.*.accept_ra_defrtr sysctl can prevent it.
+    #
+    # Now the only global-*scope* v6 address left on the box is Tailscale's
+    # ULA, so RFC 6724 source selection picks it for every global destination:
+    #
+    #   $ ip -6 route get 2606:4700:7::a29f:82eb        # an AAAA of discord.media
+    #   ... via fe80::1 dev wlp5s0 proto ra src fd7a:115c:a1e0::5e37:d09
+    #
+    # That is an RFC 4193 private address leaving the LAN for the public
+    # internet. It is dropped upstream with no ICMP back — a silent black hole.
+    # `tailscale netcheck` sums it up as "IPv6: no, but OS has support", and the
+    # "but OS has support" half is the entire bug: the box advertises v6
+    # capability to applications and then eats every v6 packet.
+    #
+    # Why only voice dies. TCP gets Happy Eyeballs (RFC 8305) — Firefox races
+    # v6, gives up in ~250ms, falls back to v4, nobody notices. ICE does not.
+    # *.discord.media publishes AAAA records, so the WebRTC stack gathers a
+    # candidate on the global-scope Tailscale ULA, forms v6 candidate pairs
+    # into the black hole, and the connectivity checks never come back. DTLS
+    # sits waiting on a path that will never come up, SRTP keys are never
+    # negotiated, and you get a voice channel you can join with no audio in
+    # either direction.
+    #
+    # The fix is to make the box honest: with no default route, a global v6
+    # destination is ENETUNREACH immediately, ICE skips v6 entirely, and the
+    # connection is made over v4 on the first try. Nothing is lost, because
+    # there was no working v6 to lose.
+    #
+    # Deliberately conditional, not a blanket "turn IPv6 off". The route is
+    # removed only while the link has no globally routable address of its own,
+    # so roaming onto a network with working IPv6 keeps it. ULAs (fc00::/7) do
+    # not count as routable — a LAN handing out its own ULA prefix reproduces
+    # exactly the same black hole.
+    #
+    # Why a dispatcher and not `ipv6.never-default`: see the dns="none" note
+    # further up. NM's [connection] section silently ignores properties that
+    # are not documented connection defaults, and never-default is not one of
+    # them — it would read as applied and do nothing, which is the same trap
+    # ipv4.ignore-auto-dns fell into.
+    #
+    # Tunnels are skipped outright. wg0 and WARP have their own carefully
+    # ordered handling above and a full-tunnel VPN is entitled to own the v6
+    # default route; tailscale0 is the interface holding the ULA in the first
+    # place and must keep its routes.
+    {
+      type = "basic";
+      source = pkgs.writeShellScript "ipv6-drop-unusable-default" ''
+        iface="$1"
+        action="$2"
+
+        ip=${pkgs.iproute2}/bin/ip
+        grep=${pkgs.gnugrep}/bin/grep
+        awk=${pkgs.gawk}/bin/awk
+        sleep=${pkgs.coreutils}/bin/sleep
+
+        case "$iface" in
+          lo|wg0|tailscale0|CloudflareWARP) exit 0 ;;
+        esac
+
+        # "up" covers boot and every reconnect; the other two catch a lease or
+        # a reapply changing the picture after the fact.
+        case "$action" in
+          up|dhcp6-change|reapply) ;;
+          *) exit 0 ;;
+        esac
+
+        # Nothing to fix if this link never had an IPv6 default route to begin
+        # with — the common v4-only case, and it keeps the poll below off the
+        # path of every ordinary link-up.
+        $ip -6 route show default dev "$iface" 2>/dev/null | $grep -q . || exit 0
+
+        # A global-scope address that is not ULA — one the internet could
+        # actually route a reply back to. Note scope global already excludes
+        # fe80::/10, so only fc00::/7 has to be filtered out by hand.
+        has_real_v6() {
+          $ip -6 -o addr show dev "$iface" scope global 2>/dev/null             | $awk '{print $4}' | $grep -qvE '^f[cd]'
+        }
+
+        # SLAAC lands a second or two after the RA and fires no dispatcher
+        # event of its own, so poll instead of judging the link on first look.
+        # A link with working v6 leaves here immediately; only the broken case
+        # pays the wait.
+        n=0
+        while [ "$n" -lt 6 ]; do
+          has_real_v6 && exit 0
+          $sleep 1
+          n=$((n + 1))
+        done
+
+        # Loop: `ip -6 route del` removes one match per call, and a link can
+        # end up with more than one default (two RAs, or a stale one).
+        deleted=0
+        while $ip -6 route show default dev "$iface" 2>/dev/null | $grep -q .; do
+          $ip -6 route del default dev "$iface" 2>/dev/null || break
+          deleted=1
+        done
+
+        if [ "$deleted" = 1 ]; then
+          echo "$iface: removed unusable IPv6 default route (link has no global v6 address)"
+        fi
+        exit 0
+      '';
+    }
   ];
 
   # ── WARP must NOT auto-connect.

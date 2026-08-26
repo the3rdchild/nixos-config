@@ -1,1 +1,1 @@
-5.9.5-stable: disable DNSOverTLS for wg0 link to prevent lookup failures
+6.0-stable: drop IPv6 default routes a link cannot source from
