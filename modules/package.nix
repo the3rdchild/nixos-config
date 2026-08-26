@@ -87,6 +87,7 @@
     tailscale
     openssl
     mission-center
+    mlocate
   ];
 
   programs.nix-ld.enable = true;
