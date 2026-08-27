@@ -1,6 +1,23 @@
 // API client for the acer-ec-web backend. The contract here must stay
 // byte-for-byte compatible with the Python server in ../../acer-ec-web.nix.
 
+export type EffectMode =
+  | "static"
+  | "breathing"
+  | "hue"
+  | "palette"
+  | "reactive";
+
+export interface Effect {
+  mode: EffectMode;
+  /** 0.1 – 5.0. Multiplies the phase advance, so 2.0 is twice as fast. */
+  speed: number;
+  /** Palette mode only: cross-fade between swatches instead of cutting. */
+  smooth: boolean;
+  /** Palette swatches as "#rrggbb" — the server hands them over already hex. */
+  palette: string[];
+}
+
 export interface FanSide {
   duty: string | null;
   rpm: string | null;
@@ -9,10 +26,13 @@ export interface FanSide {
 export interface Status {
   available: boolean;
   kbd: {
+    /** The *base* brightness the user picked — the peak a breath swings to,
+     *  not whatever the effect thread last wrote. */
     brightness: number;
     max_brightness: number;
-    /** "r g b" — the raw multi_intensity string. */
+    /** "r g b" — the base colour, likewise, not the live sysfs value. */
     color: string;
+    effect: Effect;
   };
   fan: {
     profile: number;

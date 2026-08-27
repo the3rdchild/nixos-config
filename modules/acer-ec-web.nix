@@ -1,5 +1,6 @@
 # acer-ec-web — localhost browser UI for the EC: keyboard backlight
-# (brightness + colour) and fan control (profile, GPU-fan duty, auto).
+# (brightness, colour and software lighting effects) and fan control
+# (profile, GPU-fan duty, auto).
 #
 # Why this shape — a Nix-built static frontend behind a Python-stdlib
 # server — and not Docker or a node runtime:
@@ -14,8 +15,19 @@
 #   Vite build), but it is built into plain static files by buildNpmPackage
 #   at Nix build time. What runs on the system is still just python3 +
 #   http.server pointing at that static root — no node, no node_modules,
-#   no express. The JSON API is unchanged; only the markup under / moved
-#   out of this file.
+#   no express. Only the markup under / moved out of this file.
+#
+# Lighting effects live HERE, in the server, not in the browser. The LED
+# has no effect engine of its own: acer_ec::kbd_backlight exposes only
+# brightness and multi_intensity (one RGB zone), so breathing/cycling is
+# something that has to be written to sysfs on a timer. Putting that timer
+# in the page would mean the effect dies with the tab and twenty HTTP
+# round-trips a second; putting it in this service means the keyboard keeps
+# breathing with the browser closed. The effect thread blocks on an Event
+# while the mode is "static", so idle cost is exactly zero.
+#
+# Effect state is deliberately in-memory: a restart of this service leaves
+# the keyboard on whatever colour it last wrote and the mode back at static.
 #
 # Security posture, matching the sysfs permissions in acer-ec.nix:
 #   - Binds 127.0.0.1 only. Never 0.0.0.0 — anything else on the LAN must
@@ -51,9 +63,13 @@ let
   };
 
   server = pkgs.writeText "acer-ec-web.py" ''
-    import json
+    import colorsys
     import glob
+    import json
+    import math
     import os
+    import threading
+    import time
     from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
     PORT = ${toString port}
@@ -63,6 +79,17 @@ let
     # The built frontend (index.html + assets), produced by buildNpmPackage
     # above. The server only reads from here.
     STATIC = "${frontend}"
+
+    # Effect tick. 20 Hz is smooth to the eye and gentle on the EC — every
+    # push is also deduplicated against the last value written, so a slow
+    # breath spends most ticks writing nothing at all.
+    TICK = 0.05
+    MODES = ("static", "breathing", "hue", "palette", "reactive")
+
+    # Reactive mode maps EC temperature onto hue: COOL_C and below is the
+    # green end of the sweep, HOT_C and above is red.
+    COOL_C = 45.0
+    HOT_C = 85.0
 
     def read(path, default=None):
         try:
@@ -75,6 +102,15 @@ let
         with open(path, "w") as f:
             f.write(text)
 
+    def write_quiet(path, text):
+        # The effect thread must survive a transient EC write failure; a
+        # dropped frame is invisible, a dead thread is not.
+        try:
+            write(path, text)
+            return True
+        except OSError:
+            return False
+
     def hwmon_temp():
         # The driver also registers a hwmon device; temp1_input there is
         # millidegrees C per hwmon convention. Prefer it over the raw
@@ -86,22 +122,21 @@ let
                     return int(t) / 1000.0
         return None
 
-    def status():
-        avail = os.path.isdir(FAN) and os.path.isdir(LED)
-        return {
-            "available": avail,
-            "kbd": {
-                "brightness": int(read(LED + "/brightness") or 0),
-                "max_brightness": int(read(LED + "/max_brightness") or 255),
-                "color": read(LED + "/multi_intensity") or "",
-            },
-            "fan": {
-                "profile": int(read(FAN + "/profile") or 0),
-                "fan1": {"duty": read(FAN + "/fan1_duty"), "rpm": read(FAN + "/fan1_rpm")},
-                "fan2": {"duty": read(FAN + "/fan2_duty"), "rpm": read(FAN + "/fan2_rpm")},
-                "temp": hwmon_temp(),
-            },
-        }
+    def clamp(v, lo, hi):
+        return lo if v < lo else (hi if v > hi else v)
+
+    def hsv(h, s, v):
+        r, g, b = colorsys.hsv_to_rgb(h % 1.0, s, v)
+        return [int(round(r * 255)), int(round(g * 255)), int(round(b * 255))]
+
+    def mix(a, b, t):
+        return [int(round(a[i] + (b[i] - a[i]) * t)) for i in range(3)]
+
+    def rgb_str(c):
+        return " ".join(str(int(x)) for x in c)
+
+    def rgb_hex(c):
+        return "#" + "".join("%02x" % int(x) for x in c)
 
     def parse_color(v):
         # Accepts "#rrggbb" (from <input type=color>), "r g b", or [r,g,b].
@@ -118,6 +153,171 @@ let
                 raise ValueError("colour values must be 0-255")
             out.append(c)
         return out
+
+    # ------------------------------------------------------------------
+    # Effect state
+    #
+    # "color" and "brightness" are the *base* values the user picked, not
+    # whatever the effect thread last wrote to sysfs — brightness is the
+    # peak a breath swings up to, colour is what static/breathing show and
+    # what the cycling modes fall back to. Holding them here is what lets
+    # the sliders sit still while the keyboard is mid-pulse.
+    # ------------------------------------------------------------------
+    lock = threading.Lock()
+    wake = threading.Event()
+    effect = {
+        "mode": "static",
+        "speed": 1.0,
+        "smooth": True,
+        "color": [0, 0, 255],
+        "palette": [[255, 40, 40], [40, 120, 255], [180, 40, 255]],
+        "brightness": 255,
+    }
+
+    MAX_BRIGHTNESS = int(read(LED + "/max_brightness") or 255)
+
+    def load_base():
+        with lock:
+            b = read(LED + "/brightness")
+            if b and b.isdigit():
+                effect["brightness"] = int(b)
+            c = read(LED + "/multi_intensity")
+            if c:
+                try:
+                    effect["color"] = parse_color(c)
+                except ValueError:
+                    pass
+
+    def push_color(c, cache):
+        s = rgb_str(c)
+        if cache.get("color") != s and write_quiet(LED + "/multi_intensity", s):
+            cache["color"] = s
+
+    def push_brightness(b, cache):
+        b = int(clamp(int(b), 0, MAX_BRIGHTNESS))
+        if cache.get("brightness") != b and write_quiet(LED + "/brightness", str(b)):
+            cache["brightness"] = b
+
+    def engine():
+        cache = {}
+        phase = 0.0
+        last = time.monotonic()
+        temp = None
+        temp_at = 0.0
+        reactive = None
+        while True:
+            with lock:
+                mode = effect["mode"]
+                speed = effect["speed"]
+                smooth = effect["smooth"]
+                base = list(effect["color"])
+                peak = effect["brightness"]
+                palette = [list(c) for c in effect["palette"]]
+
+            if mode == "static" or not os.path.isdir(LED):
+                # Nothing to animate: sleep on the event until a mode
+                # change wakes us. The 5 s timeout only exists so a LED
+                # that appears late is picked up without a request.
+                cache.clear()
+                reactive = None
+                wake.wait(5.0)
+                wake.clear()
+                last = time.monotonic()
+                continue
+
+            now = time.monotonic()
+            # Accumulating phase rather than deriving it from a start time
+            # means a speed change bends the curve instead of jumping it.
+            phase += clamp(now - last, 0.0, 0.5) * speed
+            last = now
+
+            if mode == "breathing":
+                # speed 1.0 == one full breath every four seconds.
+                level = 0.5 - 0.5 * math.cos(phase * 2.0 * math.pi * 0.25)
+                push_color(base, cache)
+                push_brightness(peak * (0.05 + 0.95 * level), cache)
+            elif mode == "hue":
+                # speed 1.0 == one lap of the wheel every 12.5 seconds.
+                push_brightness(peak, cache)
+                push_color(hsv(phase * 0.08, 1.0, 1.0), cache)
+            elif mode == "palette":
+                pal = palette or [base]
+                step = phase * 0.5  # speed 1.0 == one swatch every 2 s
+                i = int(step) % len(pal)
+                frac = step - int(step)
+                if smooth and len(pal) > 1:
+                    # Hold the swatch, then cross-fade over the last third
+                    # with a smoothstep so the handover has no hard edge.
+                    t = clamp((frac - 0.65) / 0.35, 0.0, 1.0)
+                    c = mix(pal[i], pal[(i + 1) % len(pal)], t * t * (3.0 - 2.0 * t))
+                else:
+                    c = pal[i]
+                push_brightness(peak, cache)
+                push_color(c, cache)
+            elif mode == "reactive":
+                if now - temp_at > 1.0:
+                    temp = hwmon_temp()
+                    temp_at = now
+                if temp is not None:
+                    x = clamp((temp - COOL_C) / (HOT_C - COOL_C), 0.0, 1.0)
+                    target = hsv(0.45 * (1.0 - x), 1.0, 1.0)
+                    # Ease towards the target so a one-degree jitter in the
+                    # EC reading does not show up as a flicker on the keys.
+                    reactive = target if reactive is None else mix(reactive, target, 0.05)
+                    push_brightness(peak, cache)
+                    push_color(reactive, cache)
+
+            time.sleep(TICK)
+
+    def apply_base(mode):
+        # Called after any state change: put sysfs back into a state the
+        # chosen mode owns. static and breathing show the base colour; every
+        # mode except breathing owns brightness outright.
+        if mode in ("static", "breathing"):
+            with lock:
+                write_quiet(LED + "/multi_intensity", rgb_str(effect["color"]))
+        if mode != "breathing":
+            with lock:
+                write_quiet(LED + "/brightness", str(int(effect["brightness"])))
+
+    def status():
+        avail = os.path.isdir(FAN) and os.path.isdir(LED)
+        with lock:
+            mode = effect["mode"]
+            if mode == "static":
+                # Static means sysfs is the source of truth — something
+                # else may have changed it. Track it so a later mode switch
+                # starts from what the keyboard is actually showing.
+                b = read(LED + "/brightness")
+                if b and b.isdigit():
+                    effect["brightness"] = int(b)
+                c = read(LED + "/multi_intensity")
+                if c:
+                    try:
+                        effect["color"] = parse_color(c)
+                    except ValueError:
+                        pass
+            kbd = {
+                "brightness": int(effect["brightness"]),
+                "max_brightness": MAX_BRIGHTNESS,
+                "color": rgb_str(effect["color"]),
+                "effect": {
+                    "mode": mode,
+                    "speed": effect["speed"],
+                    "smooth": effect["smooth"],
+                    "palette": [rgb_hex(c) for c in effect["palette"]],
+                },
+            }
+        return {
+            "available": avail,
+            "kbd": kbd,
+            "fan": {
+                "profile": int(read(FAN + "/profile") or 0),
+                "fan1": {"duty": read(FAN + "/fan1_duty"), "rpm": read(FAN + "/fan1_rpm")},
+                "fan2": {"duty": read(FAN + "/fan2_duty"), "rpm": read(FAN + "/fan2_rpm")},
+                "temp": hwmon_temp(),
+            },
+        }
 
     # SimpleHTTPRequestHandler does the static side: "/" maps to
     # index.html in STATIC, asset paths keep their built names, content
@@ -159,36 +359,81 @@ let
             self.send_json(200, dict({"ok": True}, **status()))
 
         def apply(self, path, req):
-            if path == "/api/kbd":
-                if "color" in req:
-                    rgb = parse_color(req["color"])
-                    write(LED + "/multi_intensity", " ".join(str(c) for c in rgb))
-                if "brightness" in req:
-                    b = int(req["brightness"])
-                    mx = int(read(LED + "/max_brightness") or 255)
-                    if not 0 <= b <= mx:
-                        raise ValueError("brightness must be 0-" + str(mx))
-                    write(LED + "/brightness", str(b))
+            if path == "/api/kbd/effect":
+                self.set_effect(req)
+            elif path == "/api/kbd":
+                self.set_kbd(req)
             elif path == "/api/fan":
-                if "profile" in req:
-                    p = int(req["profile"])
-                    if not 1 <= p <= 4:
-                        raise ValueError("profile must be 1-4")
-                    write(FAN + "/profile", str(p))
-                if "fan2_duty" in req:
-                    d = int(req["fan2_duty"])
-                    if not 0 <= d <= 255:
-                        raise ValueError("fan2_duty must be 0-255")
-                    write(FAN + "/fan2_duty_set", str(d))
-                if req.get("auto"):
-                    # Any value accepted; the store handler ignores it.
-                    write(FAN + "/fan_auto", "1")
+                self.set_fan(req)
             else:
                 raise ValueError("not found")
+
+        def set_kbd(self, req):
+            with lock:
+                mode = effect["mode"]
+                if "color" in req:
+                    effect["color"] = parse_color(req["color"])
+                if "brightness" in req:
+                    b = int(req["brightness"])
+                    if not 0 <= b <= MAX_BRIGHTNESS:
+                        raise ValueError("brightness must be 0-" + str(MAX_BRIGHTNESS))
+                    effect["brightness"] = b
+            # Under a cycling mode these are only the base the effect falls
+            # back to, so the write is left to the engine; under static and
+            # breathing the change has to land now to feel direct.
+            if mode in ("static", "breathing"):
+                if "color" in req:
+                    write(LED + "/multi_intensity", rgb_str(effect["color"]))
+                if "brightness" in req and mode == "static":
+                    write(LED + "/brightness", str(int(effect["brightness"])))
+            elif "brightness" in req:
+                write(LED + "/brightness", str(int(effect["brightness"])))
+
+        def set_effect(self, req):
+            with lock:
+                if "mode" in req:
+                    m = req["mode"]
+                    if m not in MODES:
+                        raise ValueError("mode must be one of " + ", ".join(MODES))
+                    effect["mode"] = m
+                if "speed" in req:
+                    s = float(req["speed"])
+                    if not 0.1 <= s <= 5.0:
+                        raise ValueError("speed must be 0.1-5.0")
+                    effect["speed"] = s
+                if "smooth" in req:
+                    effect["smooth"] = bool(req["smooth"])
+                if "color" in req:
+                    effect["color"] = parse_color(req["color"])
+                if "palette" in req:
+                    pal = req["palette"]
+                    if not isinstance(pal, list) or not 1 <= len(pal) <= 8:
+                        raise ValueError("palette must be 1-8 colours")
+                    effect["palette"] = [parse_color(c) for c in pal]
+                mode = effect["mode"]
+            apply_base(mode)
+            wake.set()
+
+        def set_fan(self, req):
+            if "profile" in req:
+                p = int(req["profile"])
+                if not 1 <= p <= 4:
+                    raise ValueError("profile must be 1-4")
+                write(FAN + "/profile", str(p))
+            if "fan2_duty" in req:
+                d = int(req["fan2_duty"])
+                if not 0 <= d <= 255:
+                    raise ValueError("fan2_duty must be 0-255")
+                write(FAN + "/fan2_duty_set", str(d))
+            if req.get("auto"):
+                # Any value accepted; the store handler ignores it.
+                write(FAN + "/fan_auto", "1")
 
         def log_message(self, fmt, *args):
             pass  # keep journald quiet; errors still surface as HTTP codes
 
+    load_base()
+    threading.Thread(target=engine, daemon=True).start()
     ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
   '';
 in
