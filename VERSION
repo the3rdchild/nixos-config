@@ -1,1 +1,1 @@
-6.1-stable: HTML UI with React + ThreeUI frontend built
+6.1.5-stable: quantize backdrop props and default off to stop iGPU stalls

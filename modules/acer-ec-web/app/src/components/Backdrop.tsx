@@ -1,4 +1,4 @@
-import { Suspense, lazy } from "react";
+import { memo, Suspense, lazy } from "react";
 import { LiquidFormBackground } from "@designcodeio/threeui/components/LiquidFormBackground";
 
 // DotMatrixBackground is the only thing here that pulls in three.js — half
@@ -34,7 +34,15 @@ export interface BackdropProps {
   energy: number;
 }
 
-export function Backdrop({ kind, hue, energy }: BackdropProps) {
+// memo'd with coarse props on purpose (see App.tsx): the accent re-renders
+// App ~4x/s while an effect runs, and each of those must not re-render the
+// ThreeUI scene — on the iGPU that stalled frames for ~1s per change.
+// Hue arrives quantised to 15° and at most every 4s, energy in eighths.
+export const Backdrop = memo(function Backdrop({
+  kind,
+  hue,
+  energy,
+}: BackdropProps) {
   if (kind === "off") return <div className="bg bg--flat" />;
   if (kind === "dots") {
     return (
@@ -65,4 +73,4 @@ export function Backdrop({ kind, hue, energy }: BackdropProps) {
       tintAmount={0.55}
     />
   );
-}
+});

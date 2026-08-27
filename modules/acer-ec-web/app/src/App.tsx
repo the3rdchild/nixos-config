@@ -43,7 +43,10 @@ function readBackdrop(): BackdropKind {
   } catch {
     // Private windows and blocked site data both land here; the default is fine.
   }
-  return "liquid";
+  // Off by default. Measured on this machine the WebGL backdrops cost
+  // 30-60fps and real watts on the iGPU — and this page exists to manage
+  // the thermals of that same GPU. They stay one header click away.
+  return "off";
 }
 
 export default function App() {
@@ -61,11 +64,21 @@ export default function App() {
   const [effect, setEffect] = useState<Effect>(DEFAULT_EFFECT);
 
   // The colour the keys are showing this instant, sampled from the preview
-  // and throttled to a few times a second. It tints the backdrop, the
-  // rotors and the selected pills, so the whole panel wears the keyboard's
-  // colour rather than just the little swatch.
+  // and throttled to a few times a second. It tints the rotors and the
+  // selected pills, so the panel wears the keyboard's colour rather than
+  // just the little swatch.
   const [accent, setAccent] = useState("#5b8cff");
   const accentAt = useRef(0);
+
+  // The backdrop's tint, derived from the accent but deliberately coarse
+  // and stale: 15° steps, refreshed at most every 4s. Every prop change
+  // into the ThreeUI shader re-renders a live scene, which on the iGPU
+  // stalled the compositor for ~1s a time (measured: 10fps, 950ms p95
+  // with a live hue sweeping four times a second). The accent still follows
+  // the keys; the shader does not.
+  const [bgHue, setBgHue] = useState(225);
+  const bgHueRef = useRef(225);
+  const bgHueAt = useRef(0);
 
   const brightHeld = useRef(false);
   const fan2Held = useRef(false);
@@ -119,6 +132,12 @@ export default function App() {
     if (now - accentAt.current < 250) return;
     accentAt.current = now;
     setAccent(hex);
+    const q = (((Math.round(hueOf(hex) / 15) * 15) % 360) + 360) % 360;
+    if (q !== bgHueRef.current && now - bgHueAt.current > 4000) {
+      bgHueRef.current = q;
+      bgHueAt.current = now;
+      setBgHue(q);
+    }
   }, []);
 
   const postColor = (hex: string) => {
@@ -180,7 +199,11 @@ export default function App() {
   const rpm1 = num(fan?.fan1.rpm ?? null);
   const rpm2 = num(fan?.fan2.rpm ?? null);
   const temp = fan?.temp ?? null;
-  const energy = clamp(Math.max(rpm1 ?? 0, rpm2 ?? 0) / 5000, 0, 1);
+  // Eighths of the 0-1 range: RPM jitter (±100 rpm is ±0.02) stays inside
+  // one bucket, so the backdrop's speed prop only moves when fan load
+  // actually changes — same reasoning as bgHue above.
+  const energy =
+    Math.round(clamp(Math.max(rpm1 ?? 0, rpm2 ?? 0) / 5000, 0, 1) * 8) / 8;
 
   const hint = MODE_LABELS.find((m) => m.mode === effect.mode)?.hint ?? "";
   const showColor = effect.mode === "static" || effect.mode === "breathing";
@@ -188,7 +211,7 @@ export default function App() {
 
   return (
     <>
-      <Backdrop kind={backdrop} hue={hueOf(accent)} energy={energy} />
+      <Backdrop kind={backdrop} hue={bgHue} energy={energy} />
       <div className="veil" />
       <div className="page">
         <header className="head">
