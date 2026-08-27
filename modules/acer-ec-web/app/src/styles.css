@@ -1,0 +1,195 @@
+:root {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: #d5d7e0;
+  font-family: "Mulish", system-ui, -apple-system, sans-serif;
+  background: #030304;
+}
+
+/* The ThreeUI background is authored to fill a parent; pin it to the
+   viewport instead and keep it under (and out of the way of) the panel. */
+.threeui-background.bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+}
+
+.threeui-background.bg canvas {
+  pointer-events: none;
+}
+
+.page {
+  position: relative;
+  z-index: 1;
+  max-width: 940px;
+  margin: 0 auto;
+  padding: 32px 16px 64px;
+}
+
+.head h1 {
+  font-size: 22px;
+  font-weight: 600;
+  margin: 0 0 24px;
+  letter-spacing: 0.01em;
+}
+
+.dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #444;
+  margin-left: 10px;
+  vertical-align: middle;
+  transition: background 0.3s ease;
+}
+
+.dot.ok {
+  background: #4cc38a;
+  box-shadow: 0 0 8px rgba(76, 195, 138, 0.6);
+}
+
+.grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+}
+
+.card {
+  background: rgba(20, 20, 28, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 16px;
+  padding: 20px;
+  backdrop-filter: blur(18px) saturate(1.3);
+  -webkit-backdrop-filter: blur(18px) saturate(1.3);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+}
+
+.card h2 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: #8b8fa3;
+  margin: 0 0 16px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 14px 0;
+  flex-wrap: wrap;
+}
+
+.row label {
+  min-width: 84px;
+  font-size: 13px;
+  color: #a9adbf;
+}
+
+input[type="range"] {
+  flex: 1;
+  min-width: 140px;
+  height: 4px;
+  appearance: none;
+  -webkit-appearance: none;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  outline: none;
+  cursor: pointer;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  background: linear-gradient(180deg, #8fb4ff, #4a6fd4);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  background: linear-gradient(180deg, #8fb4ff, #4a6fd4);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+
+input[type="color"] {
+  width: 46px;
+  height: 32px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  padding: 2px;
+  cursor: pointer;
+}
+
+.val {
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  color: #e6e8f0;
+  min-width: 70px;
+  text-align: right;
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 16px;
+  font-size: 13px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.stats .k {
+  color: #8b8fa3;
+}
+
+.stats .v {
+  color: #e6e8f0;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* ThreeUI LumenCta is authored as a full-bleed section; here it is an
+   inline control, so the stage wrapper shrinks to the button and drops
+   its violet ground in favour of the card's glass. */
+.seg {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.lumen-cta {
+  background: transparent;
+  display: inline-grid;
+  width: auto;
+  height: auto;
+}
+
+.lumen-cta__button {
+  height: 36px;
+  padding: 0 16px;
+  font-size: 13px;
+}
+
+.err {
+  color: #e06c75;
+  font-size: 13px;
+  min-height: 18px;
+  margin-top: 14px;
+}
