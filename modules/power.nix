@@ -179,6 +179,189 @@
     };
   };
 
+  # ── "Silent" mode: aggressive CPU power caps while power-saver is active.
+  #
+  # The three buttons on the caelestia bar are power-profiles-daemon's
+  # performance / balanced / power-saver, and ppd bridges those into the EC as
+  # platform_profile 4 / 2 / 1. What ppd does NOT do is limit the CPU: on this
+  # machine power-saver only moves the intel_pstate EPP to "power" and leaves
+  # everything else wide open —
+  #
+  #     no_turbo     = 0        turbo still live
+  #     max_perf_pct = 100
+  #     RAPL PL1/PL2 = 45 W / 115 W
+  #
+  # — so "power-saver" was costing far less than its name suggests. This
+  # service closes that gap, and only for power-saver; balanced and
+  # performance are left exactly as they were.
+  #
+  # Why cap power rather than force the fans down: fan1_duty_set is root-only
+  # on purpose (see ../modules/acer-ec.nix — SCMD 0x68 carries both duties and
+  # nothing on the EC side catches a CPU fan pinned low while load climbs).
+  # Capping the package instead makes the CPU produce less heat, and the EC's
+  # own quiet curve then slows the fan by itself. Silence as a consequence,
+  # with the EC's thermal protection still fully in charge. The dGPU fan needs
+  # no help at all: profile 1 already parks it (fan2_duty and fan2_rpm both
+  # read 0 there).
+  #
+  # Event-driven, not polled. gdbus blocks on the ppd D-Bus signal, so this
+  # costs nothing while the profile is not changing — which matters, since a
+  # polling loop to save power would be self-defeating.
+  systemd.services.power-profile-tuning = {
+    description = "Cap CPU power while the power-saver profile is active";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "power-profiles-daemon.service" ];
+    wants = [ "power-profiles-daemon.service" ];
+    serviceConfig = {
+      Type = "simple";
+      Restart = "always";
+      RestartSec = 5;
+      # Uncapping on stop matters: without this, stopping or restarting the
+      # unit would leave the machine pinned at 10 W until the next profile
+      # change happened to come along.
+      ExecStopPost = "${pkgs.writeShellScript "power-profile-tuning-release" ''
+        B=/run/power-profile-tuning
+        P=/sys/devices/system/cpu/intel_pstate
+        R=/sys/class/powercap/intel-rapl:0
+        # Fans back to the EC before the limits come off — same ordering rule
+        # as restore() in the main script.
+        echo 1 > /sys/kernel/acer_fanctl/fan_auto 2>/dev/null
+        [ -f "$B/no_turbo" ]     && cat "$B/no_turbo"     > "$P/no_turbo" 2>/dev/null
+        [ -f "$B/max_perf_pct" ] && cat "$B/max_perf_pct" > "$P/max_perf_pct" 2>/dev/null
+        [ -f "$B/pl1" ] && cat "$B/pl1" > "$R/constraint_0_power_limit_uw" 2>/dev/null
+        [ -f "$B/pl2" ] && cat "$B/pl2" > "$R/constraint_1_power_limit_uw" 2>/dev/null
+        exit 0
+      ''}";
+      ExecStart = pkgs.writeShellScript "power-profile-tuning" ''
+        set -u
+        B=/run/power-profile-tuning
+        P=/sys/devices/system/cpu/intel_pstate
+        R=/sys/class/powercap/intel-rapl:0
+        F=/sys/kernel/acer_fanctl
+
+        # Silent targets. max_perf_pct is a percentage of the maximum turbo
+        # ratio, so 30 lands around 1.3 GHz with turbo already disabled —
+        # deliberately slow, which is the trade that was asked for.
+        SILENT_PL1=10000000   # 10 W sustained
+        SILENT_PL2=15000000   # 15 W burst; PL2 below PL1 would be meaningless
+        SILENT_MAXPCT=30
+
+        # Baseline is captured from the live machine rather than hardcoded, so
+        # a firmware update that ships different stock limits is restored to
+        # ITS values and not to yesterday's guess.
+        mkdir -p "$B"
+        if [ ! -e "$B/saved" ]; then
+          cat "$P/no_turbo"     > "$B/no_turbo"     2>/dev/null || true
+          cat "$P/max_perf_pct" > "$B/max_perf_pct" 2>/dev/null || true
+          cat "$R/constraint_0_power_limit_uw" > "$B/pl1" 2>/dev/null || true
+          cat "$R/constraint_1_power_limit_uw" > "$B/pl2" 2>/dev/null || true
+          touch "$B/saved"
+        fi
+
+        # Never abort the loop on a rejected write. RAPL in particular may be
+        # locked by firmware (the MSR has a lock bit that some Acer BIOSes
+        # set); if it is, turbo and max_perf_pct still apply and the failure is
+        # reported here instead of silently doing nothing.
+        w() {
+          if printf '%s' "$2" > "$1" 2>/dev/null; then
+            return 0
+          fi
+          echo "power-profile-tuning: write refused: $1 <- $2" >&2
+          return 1
+        }
+
+        silent() {
+          w "$P/no_turbo" 1
+          w "$P/max_perf_pct" "$SILENT_MAXPCT"
+          w "$R/constraint_0_power_limit_uw" "$SILENT_PL1"
+          w "$R/constraint_1_power_limit_uw" "$SILENT_PL2"
+
+          # Park the dGPU fan — but only AFTER the caps above are in place.
+          #
+          # Ordering is the whole safety argument. SCMD 0x68 carries both fan
+          # duties, so writing fan2 latches fan1 at whatever the EC's curve
+          # last set, taking the CPU fan off automatic control. That is only
+          # acceptable because the package is already pinned to 10 W by the
+          # time this runs: a 10 W package cannot outrun the duty the quiet
+          # curve had already chosen. Do this before the caps and there is a
+          # window where a latched fan meets a 45 W package.
+          #
+          # The dGPU keeps its own hardware thermal protection regardless, so
+          # the worst case if something wakes it here is that it throttles.
+          w "$F/fan2_duty_set" 0
+
+          echo "power-profile-tuning: silent -> no_turbo=$(cat $P/no_turbo 2>/dev/null) max_perf_pct=$(cat $P/max_perf_pct 2>/dev/null) PL1=$(cat $R/constraint_0_power_limit_uw 2>/dev/null) PL2=$(cat $R/constraint_1_power_limit_uw 2>/dev/null) fan2=$(cat $F/fan2_rpm 2>/dev/null)rpm"
+        }
+
+        restore() {
+          # Hand the fans back to the EC first, for the mirror image of the
+          # reason above: uncapping to 45 W while fan1 is still latched low is
+          # exactly the combination to avoid. fan_auto releases both.
+          w "$F/fan_auto" 1
+
+          [ -f "$B/no_turbo" ]     && w "$P/no_turbo"     "$(cat $B/no_turbo)"
+          [ -f "$B/max_perf_pct" ] && w "$P/max_perf_pct" "$(cat $B/max_perf_pct)"
+          [ -f "$B/pl1" ] && w "$R/constraint_0_power_limit_uw" "$(cat $B/pl1)"
+          [ -f "$B/pl2" ] && w "$R/constraint_1_power_limit_uw" "$(cat $B/pl2)"
+          echo "power-profile-tuning: restored stock limits"
+        }
+
+        apply() {
+          prof=$(${pkgs.power-profiles-daemon}/bin/powerprofilesctl get 2>/dev/null || echo "")
+          case "$prof" in
+            power-saver) silent ;;
+            "")          : ;;   # ppd not up yet; leave the machine alone
+            *)           restore ;;
+          esac
+        }
+
+        apply
+        # Any property change on ppd wakes this; re-reading the profile is
+        # cheaper than parsing gdbus's output format, and correct even if a
+        # change is coalesced.
+        ${pkgs.glib}/bin/gdbus monitor --system \
+          --dest net.hadess.PowerProfiles \
+          --object-path /net/hadess/PowerProfiles 2>/dev/null |
+        while read -r _line; do
+          apply
+        done
+      '';
+    };
+  };
+
+  # Re-apply the silent tuning after a resume.
+  #
+  # The EC drops any manual fan duty and re-applies its own curve when the
+  # machine comes back from suspend — the same behaviour ../modules/acer-ec.nix
+  # documents for acer-fan-max. Without this, closing the lid on battery (which
+  # now suspends, see HandleLidSwitch above) and reopening it would silently
+  # leave the dGPU fan spinning again while the profile still said power-saver.
+  #
+  # NOT powerManagement.resumeCommands. That option still exists and still
+  # type-checks on this nixpkgs, but nothing consumes it any more: there is no
+  # post-resume unit in the built system, and a value set there appears in no
+  # unit or sleep hook at all. It fails silently, which is the worst way for a
+  # safety re-assertion to fail — hence this explicit unit instead.
+  #
+  # WantedBy + After on the sleep targets is the standard idiom for "run on the
+  # way back up": systemd starts units ordered After= a sleep target once the
+  # system has resumed, which is exactly what NixOS's own post-resume used to do.
+  #
+  # try-restart rather than a bespoke re-apply path: a restart runs
+  # ExecStopPost (fans back to the EC, stock limits) and then ExecStart
+  # (re-read the profile, re-apply only if it is still power-saver), reusing
+  # the ordering guarantees already written into both halves. No-op when the
+  # unit is not running.
+  systemd.services.power-profile-tuning-resume = {
+    description = "Re-apply CPU/fan power caps after resume";
+    after = [ "suspend.target" "hibernate.target" "hybrid-sleep.target" ];
+    wantedBy = [ "suspend.target" "hibernate.target" "hybrid-sleep.target" ];
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = "${pkgs.systemd}/bin/systemctl try-restart power-profile-tuning.service";
+    };
+  };
+
   # Manual sleep is deliberately left working — SUPER+SHIFT+L in the caelestia
   # keybinds still suspends on purpose, as does the battery idle timer's
   # `systemctl suspend`. Only the *button/lid* paths are off, so sleep.target
