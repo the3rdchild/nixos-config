@@ -101,7 +101,18 @@ let
           echo 255 > "$S/fan2_duty_set"
         fi
       fi
-      sleep 3
+      # Poll cadence is split by whether there is anything to do. In the
+      # pinned profile the fans must be re-asserted promptly, so 3 s stands.
+      # Outside it — which is nearly all of the time, since profile 4 is the
+      # gaming profile — this loop was still waking every 3 s to fork two
+      # `cat`s and compare a string it had already seen, around 28 000 wakeups
+      # a day for no observable work. 15 s there is still far faster than a
+      # human can switch profiles and notice the fans lagging.
+      if [ "$(cat "$S/profile" 2>/dev/null)" = "$PIN_PROFILE" ]; then
+        sleep 3
+      else
+        sleep 15
+      fi
     done
   '';
 in

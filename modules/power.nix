@@ -1,4 +1,4 @@
-{ ... }:
+{ pkgs, ... }:
 {
   # ── Battery and power profiles.
   #
@@ -54,17 +54,28 @@
     HandleSuspendKey = "ignore";
     HandleHibernateKey = "ignore";
 
-    # Closing the lid does nothing, on every power source. logind picks one of
-    # these three based on state, most specific first:
+    # Lid behaviour is split by power source. logind picks one of these three
+    # based on state, most specific first:
     #   HandleLidSwitchDocked        — docked, or >1 display connected
     #   HandleLidSwitchExternalPower — on AC
     #   HandleLidSwitch              — everything else (i.e. on battery)
     #
-    # Only HandleLidSwitch actually needs overriding (NixOS defaults it to
-    # "suspend"; the other two already fall through to it when unset). They are
-    # all pinned anyway so no future default can reintroduce a suspend on one
-    # power source but not the other.
-    HandleLidSwitch = "ignore";
+    # On AC and docked the lid still does nothing: that is the deliberate
+    # "close it and keep the build running" behaviour this machine was set up
+    # for, and on AC there is no cost to it.
+    #
+    # On battery it now suspends, which is the one case where doing nothing is
+    # expensive. This battery has worn to 64.7% of design (33.99 Wh of 52.51),
+    # so an idle-but-awake machine in a bag or between meetings burns a much
+    # larger share of what is left than it used to. The shell's own idle timer
+    # in ../home/caelestia.nix does eventually suspend on battery, but "lid
+    # shut" is a far more definite signal of intent than an idle countdown,
+    # and it fires immediately instead of after the timeout.
+    #
+    # Suspend here is real S3, not s2idle: /sys/power/mem_sleep reports
+    # "s2idle [deep]", so the selected state is the one that actually cuts
+    # power to the SoC rather than idling in it.
+    HandleLidSwitch = "suspend";
     HandleLidSwitchExternalPower = "ignore";
     HandleLidSwitchDocked = "ignore";
 
@@ -72,6 +83,100 @@
     # monitor issues its own `systemctl suspend` on battery (see
     # ../home/caelestia.nix) — that path is unaffected by this switch.
     IdleAction = "ignore";
+  };
+
+
+  # ── Wi-Fi power saving.
+  #
+  # NetworkManager leaves this off by default; nothing in ./network.nix sets
+  # it either way, so the AX210 has been running with PSM disabled. Turning it
+  # on lets the radio sleep between beacons, which is where most of an idle
+  # wifi link's power goes. The cost is a few ms of extra latency on the first
+  # packet after an idle gap — invisible for browsing and ssh, and this is the
+  # same default Windows ships on the same card.
+  networking.networkmanager.wifi.powersave = true;
+
+  # ── PCIe runtime power management.
+  #
+  # The kernel leaves power/control at "on" for most PCI devices unless
+  # something sets it. TLP or `powertop --auto-tune` would normally be that
+  # something, but neither is installed here (see the ppd note above — TLP and
+  # power-profiles-daemon conflict, and ppd is what the caelestia bar drives).
+  # So these rules do the same job for the handful of devices where it is
+  # worth doing, and nothing else.
+  #
+  # Verified state before this rule (power/control per device):
+  #   on  0000:04:00.0  Realtek RTL8168 Ethernet   — link DOWN, still powered
+  #   on  0000:06:00.0  O2 Micro SD/MMC reader     — no card ever inserted
+  #   on  0000:05:00.0  Intel AX210 Wi-Fi 6E
+  #   on  0000:00:0a.0  Intel Platform Monitoring Technology
+  #
+  # The two NVMe controllers are deliberately NOT included. Their idle power
+  # is already handled by APST (autonomous power state transitions, negotiated
+  # by the drive itself), d3cold on top of that buys little, and one of them
+  # carries the root filesystem — not somewhere to introduce resume latency
+  # for a fraction of a watt.
+  #
+  # Matching on vendor/device rather than PCI slot: slots move when firmware
+  # renumbers the bus, IDs do not.
+  services.udev.extraRules = ''
+    # O2 Micro OZ711 SD/MMC card reader. Nothing on this machine uses the SD
+    # slot; the controller is simply powered up doing nothing.
+    ACTION=="add", SUBSYSTEM=="pci", ATTR{vendor}=="0x1217", ATTR{device}=="0x8621", ATTR{power/control}="auto"
+
+    # Realtek RTL8111/8168 Gigabit Ethernet. The r8169 is the classic offender
+    # here: it holds the link powered even with no cable attached, which is
+    # this machine's normal state (wifi only).
+    ACTION=="add", SUBSYSTEM=="pci", ATTR{vendor}=="0x10ec", ATTR{device}=="0x8168", ATTR{power/control}="auto"
+
+    # Intel Wi-Fi 6E AX210. Complements the NetworkManager powersave above:
+    # that one is the radio's own PSM, this is the PCIe link underneath it.
+    ACTION=="add", SUBSYSTEM=="pci", ATTR{vendor}=="0x8086", ATTR{device}=="0x2725", ATTR{power/control}="auto"
+
+    # Intel Platform Monitoring Technology — telemetry block, no runtime user.
+    ACTION=="add", SUBSYSTEM=="pci", ATTR{vendor}=="0x8086", ATTR{device}=="0x467d", ATTR{power/control}="auto"
+
+    # ── Follow the AC adapter with the power profile (see the service below).
+    ACTION=="change", SUBSYSTEM=="power_supply", KERNEL=="AC", RUN+="${pkgs.systemd}/bin/systemctl start --no-block ppd-follow-ac.service"
+  '';
+
+  # ── Switch power profile when the adapter comes and goes.
+  #
+  # power-profiles-daemon does not do this on its own. Under GNOME the shell
+  # drives it; there is no GNOME here, and the caelestia bar only exposes the
+  # three buttons for manual use — so unplugging the charger has so far left
+  # the machine in whatever profile it was already in, which in practice is
+  # "balanced" all day including on battery.
+  #
+  # power-saver is the meaningful one of the three on battery: it moves the
+  # intel_pstate EPP from balance_performance to power, and takes the EC's
+  # platform_profile down to "quiet" (profile 1), which lowers the fan curve
+  # as well as the CPU. On AC it goes back to balanced rather than to
+  # performance — performance pins the EC to profile 4, which ./acer-ec.nix
+  # deliberately pairs with both fans at 100%.
+  systemd.services.ppd-follow-ac = {
+    description = "Match the power profile to AC adapter presence";
+    # After, not Requires: if ppd is not up yet, the profile it starts in is
+    # already the right one and there is nothing to correct.
+    after = [ "power-profiles-daemon.service" ];
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = pkgs.writeShellScript "ppd-follow-ac" ''
+        online=$(cat /sys/class/power_supply/AC/online 2>/dev/null || echo 1)
+        if [ "$online" = "0" ]; then
+          target=power-saver
+        else
+          target=balanced
+        fi
+        # Never override a deliberate choice of "performance": if the user has
+        # asked for it, plugging in should not silently drop them to balanced.
+        cur=$(${pkgs.power-profiles-daemon}/bin/powerprofilesctl get 2>/dev/null || echo "")
+        if [ "$cur" = "performance" ] && [ "$online" != "0" ]; then
+          exit 0
+        fi
+        exec ${pkgs.power-profiles-daemon}/bin/powerprofilesctl set "$target"
+      '';
+    };
   };
 
   # Manual sleep is deliberately left working — SUPER+SHIFT+L in the caelestia

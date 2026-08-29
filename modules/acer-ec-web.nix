@@ -86,6 +86,29 @@ let
     TICK = 0.05
     MODES = ("static", "breathing", "hue", "palette", "reactive")
 
+    # How long a /api/status response may be reused before the EC is read
+    # again. This is a power control, not a performance one.
+    #
+    # Every read under /sys/kernel/acer_fanctl is an ACPI SCMD exchange, and
+    # each exchange is many single-byte EC transactions — each of which raises
+    # GPE 0x6E, the embedded controller's own interrupt (see the boot log:
+    # "ACPI: EC: GPE=0x6e"). One status response touches eight such files, so
+    # the panel polling once a second was measured driving ~540 GPE/s and
+    # holding the irq/9-acpi kernel thread at ~5% CPU permanently. That thread
+    # never idles, which keeps the package out of its deep C-states.
+    #
+    # 2 s halves the sampling rate against the frontend's 1 s poll while
+    # keeping fan RPM and temperature current enough to watch. Interactivity
+    # does not suffer: every write path invalidates this immediately, so a
+    # profile or colour change still reflects on the next response rather
+    # than up to 2 s later.
+    #
+    # The frontend already skips its poll while the tab is hidden, so a
+    # backgrounded panel costs nothing either way. This bounds the case that
+    # actually burns power: the panel left open and visible on a second
+    # workspace. Raise it if the rotors still feel too eager for the battery.
+    STATUS_TTL = 2.0
+
     # Reactive mode maps EC temperature onto hue: COOL_C and below is the
     # green end of the sweep, HOT_C and above is red.
     COOL_C = 45.0
@@ -280,7 +303,32 @@ let
             with lock:
                 write_quiet(LED + "/brightness", str(int(effect["brightness"])))
 
+    # Guards status_cache only. Deliberately not `lock`: that one is held
+    # while the effect state is mutated, and status_uncached() takes it.
+    status_lock = threading.Lock()
+    status_cache = {"at": 0.0, "val": None}
+
+    def invalidate_status():
+        # Called after anything that writes to the EC, so the next poll
+        # re-reads instead of serving a value from before the write.
+        with status_lock:
+            status_cache["at"] = 0.0
+
     def status():
+        now = time.monotonic()
+        with status_lock:
+            if status_cache["val"] is not None and now - status_cache["at"] < STATUS_TTL:
+                return status_cache["val"]
+        # Read outside status_lock: the EC exchange is slow and there is no
+        # harm in two racing pollers both refreshing, only in serialising
+        # every caller behind the lock while the EC is talked to.
+        val = status_uncached()
+        with status_lock:
+            status_cache["val"] = val
+            status_cache["at"] = time.monotonic()
+        return val
+
+    def status_uncached():
         avail = os.path.isdir(FAN) and os.path.isdir(LED)
         with lock:
             mode = effect["mode"]
@@ -354,8 +402,12 @@ let
             try:
                 self.apply(self.path, req)
             except (ValueError, OSError) as e:
+                # A write may have partially landed before raising, so drop
+                # the cache on the error path too.
+                invalidate_status()
                 self.send_json(400, {"error": str(e)})
                 return
+            invalidate_status()
             self.send_json(200, dict({"ok": True}, **status()))
 
         def apply(self, path, req):
