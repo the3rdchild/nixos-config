@@ -290,7 +290,12 @@
           # the worst case if something wakes it here is that it throttles.
           w "$F/fan2_duty_set" 0
 
-          echo "power-profile-tuning: silent -> no_turbo=$(cat $P/no_turbo 2>/dev/null) max_perf_pct=$(cat $P/max_perf_pct 2>/dev/null) PL1=$(cat $R/constraint_0_power_limit_uw 2>/dev/null) PL2=$(cat $R/constraint_1_power_limit_uw 2>/dev/null) fan2=$(cat $F/fan2_rpm 2>/dev/null)rpm"
+          # Report fan2_duty, never fan2_rpm. The duty reflects the write
+          # immediately; the tachometer lags it by several seconds while the
+          # blades coast down, so logging rpm here reads like a failure even
+          # when the write landed perfectly — an early run of this logged
+          # "fan2=8364rpm" a moment after successfully setting duty 0.
+          echo "power-profile-tuning: silent -> no_turbo=$(cat $P/no_turbo 2>/dev/null) max_perf_pct=$(cat $P/max_perf_pct 2>/dev/null) PL1=$(cat $R/constraint_0_power_limit_uw 2>/dev/null) PL2=$(cat $R/constraint_1_power_limit_uw 2>/dev/null) fan2_duty=$(cat $F/fan2_duty 2>/dev/null)"
         }
 
         restore() {
