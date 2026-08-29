@@ -295,6 +295,21 @@
           # blades coast down, so logging rpm here reads like a failure even
           # when the write landed perfectly — an early run of this logged
           # "fan2=8364rpm" a moment after successfully setting duty 0.
+          #
+          # WARNING, verified by hand against the physical machine: once this
+          # write puts the pair into manual mode, BOTH tachometers report 0
+          # regardless of what the fans are doing. fan1 stays latched at
+          # whatever duty the EC's curve last chose (observed frozen at 86
+          # while package temperature drifted 45-47 C, i.e. the curve is no
+          # longer adjusting it) and the CPU fan KEEPS SPINNING at that duty —
+          # confirmed by listening to the machine, not by sysfs. fan1_rpm,
+          # fan2_rpm and the acer_ec hwmon fan[12]_input all read 0 here.
+          #
+          # So do not read "0 RPM" in silent mode as "fans stopped", and do not
+          # conclude the cap is holding temperature passively. The CPU fan is
+          # still doing its job; only the telemetry is gone. Anything built on
+          # these values (bar widgets, mission-center) shows 0 and is wrong.
+          # fan_auto in restore() brings both the control and the readings back.
           echo "power-profile-tuning: silent -> no_turbo=$(cat $P/no_turbo 2>/dev/null) max_perf_pct=$(cat $P/max_perf_pct 2>/dev/null) PL1=$(cat $R/constraint_0_power_limit_uw 2>/dev/null) PL2=$(cat $R/constraint_1_power_limit_uw 2>/dev/null) fan2_duty=$(cat $F/fan2_duty 2>/dev/null)"
         }
 
