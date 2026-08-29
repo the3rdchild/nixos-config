@@ -638,6 +638,24 @@ in {
       --   hyprctl eval 'hl.config({ misc = { disable_splash_rendering = true } })'
       hl.config({ misc = { disable_splash_rendering = true } })
 
+      -- ── NumLock starts OFF, which is what puts the numpad in pointer mode.
+      --
+      -- modules/mousekeys.nix reads NumLock as an LED and claims the numpad
+      -- only while that LED is dark, so this one line is what decides whether
+      -- mousekeys is live the moment the session comes up. Upstream's
+      -- input.lua:6 already sets false and so does Hyprland itself, which is
+      -- precisely the problem: nothing here would notice a caelestia bump
+      -- flipping it, and the symptom would be a numpad that silently stopped
+      -- moving the pointer. Pinned here, where the comment can say why.
+      --
+      -- hl.config merges per key, so upstream's kb_layout / repeat_rate /
+      -- touchpad block in that same `input` table is left alone.
+      --
+      -- This governs the SESSION only. SDDM turns NumLock on for the greeter
+      -- (autoNumlock, modules/sddm.nix), so the numpad still types digits at
+      -- the password prompt and only becomes a pointer once Hyprland is up.
+      hl.config({ input = { numlock_by_default = false } })
+
       -- ── Display / monitor configuration.
       --
       -- Hyprland's Lua parser refuses `hyprctl keyword` outright ("keyword

@@ -8,7 +8,7 @@
 #   -                    right click
 #   +                    double click, held = 100 ms click train
 #   0                    left button DOWN and latched (drag)
-#   .                    release the latch
+#   5, .                 release that latch (5 does this instead of clicking)
 #   CTRL / SHIFT         ×3 / ×0.2 movement speed
 #
 # ── Why a daemon, and not one of the four obvious cheaper answers
@@ -142,7 +142,14 @@ let
     KEY_LATCH = ec.KEY_KP0         # press: left button down and STAYS down.
     KEY_UNLATCH = ec.KEY_KPDOT     # press: release whatever the latch is holding.
 
-    CLAIMED = set(MOVE) | set(HOLD_BTN) | {KEY_BURST, KEY_LATCH, KEY_UNLATCH}
+    # Keys that drop the KP0 latch instead of doing their usual job. KP_DOT
+    # exists only for this. KP5 is here because the finger is already on it,
+    # and a left "click" while the left button is latched down is not a
+    # meaningful thing to ask for -- the refcount would simply hand the button
+    # from the latch over to KP5 and carry the drag on until KP5 came back up.
+    LATCH_RELEASERS = {KEY_UNLATCH, ec.KEY_KP5}
+
+    CLAIMED = set(MOVE) | set(HOLD_BTN) | {KEY_BURST, KEY_LATCH} | LATCH_RELEASERS
 
     CTRL_KEYS = {ec.KEY_LEFTCTRL, ec.KEY_RIGHTCTRL}
     SHIFT_KEYS = {ec.KEY_LEFTSHIFT, ec.KEY_RIGHTSHIFT}
@@ -249,6 +256,7 @@ let
             self.kbd = None
 
             self.claimed_held = set()   # numpad keys we swallowed the press of
+            self.unlatched = set()      # keys whose press went to dropping the latch
             self.moving = set()         # subset of MOVE currently held
             self.ctrl = set()
             self.shift = set()
@@ -346,15 +354,25 @@ let
                 self._led = True
                 return self._led
             try:
-                self._led = ec.LED_NUML in dev.leds()
+                led = ec.LED_NUML in dev.leds()
             except OSError:
-                self._led = True
+                led = True
+            if led != self._led:
+                # Logged on every flip: this is the one piece of state that
+                # decides whether the numpad is a pointer, and it is inferred
+                # rather than told to us, so `journalctl -u mousekeys` should
+                # be able to answer "what does the daemon think right now".
+                log("NumLock %s: numpad %s"
+                    % ("on" if led else "off",
+                       "passes through" if led else "drives the pointer"))
+            self._led = led
             return self._led
 
         def reset(self):
             """Drop every pointer action. claimed_held is deliberately kept: the
             key-up events for keys whose press we ate still have to be eaten."""
             self.moving.clear()
+            self.unlatched.clear()
             self.acc_x = self.acc_y = 0.0
             self.burst_running = False
             self.burst_held = False
@@ -387,6 +405,10 @@ let
             self.kbd.write_event(event)
 
         def key_down(self, code, now):
+            if code in LATCH_RELEASERS and "latch" in self.pointer.holders[ec.BTN_LEFT]:
+                self.pointer.release(ec.BTN_LEFT, "latch")
+                self.unlatched.add(code)
+                return
             if code in MOVE:
                 if not self.moving:
                     self.last_move = now
@@ -397,8 +419,6 @@ let
                 self.pointer.press(HOLD_BTN[code], code)
             elif code == KEY_LATCH:
                 self.pointer.press(ec.BTN_LEFT, "latch")
-            elif code == KEY_UNLATCH:
-                self.pointer.release(ec.BTN_LEFT, "latch")
             elif code == KEY_BURST:
                 self.burst_held = True
                 if not self.burst_running:
@@ -408,6 +428,10 @@ let
                     self.next_burst = now
 
         def key_up(self, code):
+            if code in self.unlatched:
+                # Its press went to dropping the latch, so the release does nothing.
+                self.unlatched.discard(code)
+                return
             if code in MOVE:
                 self.moving.discard(code)
                 if not self.moving:

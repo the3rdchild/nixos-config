@@ -20,6 +20,7 @@
     ./filesystems.nix
     ./automount.nix
     ./acer-ec.nix
+    ./mousekeys.nix
     ./acer-ec-web.nix
     ./openplc.nix
   ];

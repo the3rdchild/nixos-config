@@ -55,7 +55,13 @@
   services.keyd = {
     enable = true;
     keyboards.default = {
-      ids = [ "*" ];
+      # "*" is every device keyd identifies as a keyboard — which would
+      # include the two virtual devices ./mousekeys.nix creates. keyd would
+      # grab the mousekeys keyboard and re-emit it onto the very node the
+      # mousekeys daemon reads, and every keystroke would circulate forever.
+      # These two ids are the ones set as KBD_/PTR_VENDOR:PRODUCT there; the
+      # pair must stay in sync with that file.
+      ids = [ "*" "-feed:0001" "-feed:0002" ];
       settings = {
         control.esc = "swap(meta)";
         "control+shift".esc = "esc";
