@@ -270,50 +270,81 @@
           return 1
         }
 
+        WPID=$B/fan-waiter.pid
+
+        profile_now() {
+          ${pkgs.power-profiles-daemon}/bin/powerprofilesctl get 2>/dev/null || echo ""
+        }
+
+        stop_fan_waiter() {
+          [ -f "$WPID" ] || return 0
+          kill "$(cat "$WPID")" 2>/dev/null || true
+          rm -f "$WPID"
+        }
+
+        start_fan_waiter() {
+          stop_fan_waiter
+          (
+            prev=""
+            n=0
+            # Bounded: if the curve never settles (sustained load), latch
+            # anyway after ~60 s rather than leaving the dGPU fan spinning
+            # forever. The 10 W cap makes whatever duty it lands on safe.
+            while [ "$n" -lt 12 ]; do
+              sleep 5
+              [ "$(profile_now)" = "power-saver" ] || exit 0
+              cur=$(cat "$F/fan1_duty" 2>/dev/null) || exit 0
+              [ -n "$prev" ] && [ "$cur" = "$prev" ] && break
+              prev=$cur
+              n=$((n + 1))
+            done
+            # Re-check once more: the profile may have changed during the last
+            # sleep, and latching after a switch back to balanced would pin the
+            # fans while the CPU runs uncapped.
+            [ "$(profile_now)" = "power-saver" ] || exit 0
+            w "$F/fan2_duty_set" 0
+            echo "power-profile-tuning: dGPU fan parked (fan1_duty=$(cat $F/fan1_duty 2>/dev/null) fan1_rpm=$(cat $F/fan1_rpm 2>/dev/null) fan2_rpm=$(cat $F/fan2_rpm 2>/dev/null))"
+          ) &
+          echo $! > "$WPID"
+        }
+
         silent() {
           w "$P/no_turbo" 1
           w "$P/max_perf_pct" "$SILENT_MAXPCT"
           w "$R/constraint_0_power_limit_uw" "$SILENT_PL1"
           w "$R/constraint_1_power_limit_uw" "$SILENT_PL2"
 
-          # Park the dGPU fan — but only AFTER the caps above are in place.
+          # Park the dGPU fan — but only AFTER the caps above are in place,
+          # and only once the EC has finished ramping.
           #
-          # Ordering is the whole safety argument. SCMD 0x68 carries both fan
-          # duties, so writing fan2 latches fan1 at whatever the EC's curve
-          # last set, taking the CPU fan off automatic control. That is only
-          # acceptable because the package is already pinned to 10 W by the
-          # time this runs: a 10 W package cannot outrun the duty the quiet
-          # curve had already chosen. Do this before the caps and there is a
-          # window where a latched fan meets a 45 W package.
+          # Ordering is the first half of the safety argument. SCMD 0x68
+          # carries both fan duties, so writing fan2 latches fan1 at whatever
+          # the EC's curve last set, taking the CPU fan off automatic control.
+          # That is only acceptable because the package is already pinned to
+          # 10 W by the time this runs: a 10 W package cannot outrun the duty
+          # the quiet curve had already chosen.
           #
-          # The dGPU keeps its own hardware thermal protection regardless, so
-          # the worst case if something wakes it here is that it throttles.
-          w "$F/fan2_duty_set" 0
-
-          # Report fan2_duty, never fan2_rpm. The duty reflects the write
-          # immediately; the tachometer lags it by several seconds while the
-          # blades coast down, so logging rpm here reads like a failure even
-          # when the write landed perfectly — an early run of this logged
-          # "fan2=8364rpm" a moment after successfully setting duty 0.
+          # Waiting is the second half, and it was learned the hard way. ppd
+          # writes platform_profile on every profile change, which makes the EC
+          # re-apply its curve — and that curve ramps DOWN over roughly twenty
+          # seconds (measured: duty 85 -> 80 -> 75 -> 71, settling at 71 with
+          # the fan at ~1600 rpm). Latching immediately froze fan1 mid-ramp at
+          # duty 86 with the curve then disabled, so it never came back down:
+          # "silent" mode left the CPU fan stuck louder than balanced does.
           #
-          # WARNING, verified by hand against the physical machine: once this
-          # write puts the pair into manual mode, BOTH tachometers report 0
-          # regardless of what the fans are doing. fan1 stays latched at
-          # whatever duty the EC's curve last chose (observed frozen at 86
-          # while package temperature drifted 45-47 C, i.e. the curve is no
-          # longer adjusting it) and the CPU fan KEEPS SPINNING at that duty —
-          # confirmed by listening to the machine, not by sysfs. fan1_rpm,
-          # fan2_rpm and the acer_ec hwmon fan[12]_input all read 0 here.
-          #
-          # So do not read "0 RPM" in silent mode as "fans stopped", and do not
-          # conclude the cap is holding temperature passively. The CPU fan is
-          # still doing its job; only the telemetry is gone. Anything built on
-          # these values (bar widgets, mission-center) shows 0 and is wrong.
-          # fan_auto in restore() brings both the control and the readings back.
-          echo "power-profile-tuning: silent -> no_turbo=$(cat $P/no_turbo 2>/dev/null) max_perf_pct=$(cat $P/max_perf_pct 2>/dev/null) PL1=$(cat $R/constraint_0_power_limit_uw 2>/dev/null) PL2=$(cat $R/constraint_1_power_limit_uw 2>/dev/null) fan2_duty=$(cat $F/fan2_duty 2>/dev/null)"
+          # So: wait for fan1_duty to stop moving, then latch. Backgrounded
+          # because apply() is called from the gdbus loop and must not block
+          # it, and re-armed on every entry so a profile flip-flop cannot leave
+          # two waiters racing.
+          start_fan_waiter
+          echo "power-profile-tuning: silent -> no_turbo=$(cat $P/no_turbo 2>/dev/null) max_perf_pct=$(cat $P/max_perf_pct 2>/dev/null) PL1=$(cat $R/constraint_0_power_limit_uw 2>/dev/null) PL2=$(cat $R/constraint_1_power_limit_uw 2>/dev/null) (dGPU fan queued)"
         }
 
         restore() {
+          # Cancel any pending latch first: a waiter that fires after this
+          # point would pin the fans while the CPU is running uncapped.
+          stop_fan_waiter
+
           # Hand the fans back to the EC first, for the mirror image of the
           # reason above: uncapping to 45 W while fan1 is still latched low is
           # exactly the combination to avoid. fan_auto releases both.
