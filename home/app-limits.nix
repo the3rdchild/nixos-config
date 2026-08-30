@@ -25,7 +25,7 @@
   # MemoryHigh is the knob that does the work — it throttles and reclaims under
   # pressure without killing anything. MemoryMax is only a backstop, set well
   # clear of High so it stays a last resort rather than the normal path. It is
-  # deliberately above Zen's observed steady state: a ceiling at ~5 GB would
+  # deliberately above Zen's observed steady state: a ceiling at ~4 GB would
   # hold it in permanent reclaim and feel worse than no limit at all.
   #
   # Swap is left uncapped on purpose. MemorySwapMax=0 removes the graceful
@@ -36,7 +36,7 @@
   # plain config files.
   xdg.configFile."systemd/user/app-flatpak-app.zen_browser.zen-.scope.d/50-memory.conf".text = ''
     [Scope]
-    MemoryHigh=6G
-    MemoryMax=8G
+    MemoryHigh=2.5G
+    MemoryMax=4G
   '';
 }
