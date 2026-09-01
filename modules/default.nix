@@ -17,6 +17,8 @@
     ./memory.nix
     ./user.nix
     ./docker.nix
+    ./libvirt.nix
+    ./vm-network.nix
     ./filesystems.nix
     ./automount.nix
     ./acer-ec.nix
