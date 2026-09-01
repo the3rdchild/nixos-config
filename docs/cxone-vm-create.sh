@@ -31,6 +31,14 @@ CXONE_ISO="$ISO_DIR/CX-One_V4.60.iso"
 DISK=/var/lib/libvirt/images/cxone.qcow2
 NAME=cxone
 
+# The CP1H's built-in USB peripheral port, as reported by lsusb:
+#     Bus 003 Device 007: ID 0590:005b Omron Corp. OMRON-PLC
+# Pinned by VID:PID, never by bus/device address, so the cable keeps working
+# across ports and through the hub it shares with the keyboard. startupPolicy
+# =optional is what lets the guest boot with the cable unplugged, which is most
+# of the time — without it libvirt refuses to start the domain at all.
+PLC_USB=0590:005b
+
 # Built by modules/libvirt.nix and exposed at a stable /etc path. Note this is
 # NOT ${pkgs.virtio-win}/share/... — that package ships an extracted tree with
 # no ISO in it at all; see the comment in the module.
@@ -82,6 +90,17 @@ fi
 virsh --connect qemu:///system pool-start default 2>/dev/null || true
 virsh --connect qemu:///system pool-autostart default
 
+# Only pin the PLC if it is actually plugged in right now; virt-install will
+# not define a hostdev for a device it cannot see, even an optional one.
+HOSTDEV=()
+if lsusb -d "$PLC_USB" &>/dev/null; then
+  HOSTDEV=(--hostdev "$PLC_USB,source.startupPolicy=optional")
+else
+  echo "note: PLC $PLC_USB not connected — creating the guest without it." >&2
+  echo "      add it later, with the cable in, via:" >&2
+  echo "      virsh attach-device $NAME plc-hostdev.xml --live --config" >&2
+fi
+
 ip link show br-plc &>/dev/null || {
   echo "br-plc is missing — has nixos-rebuild switch run since modules/vm-network.nix landed?" >&2
   exit 1
@@ -109,6 +128,10 @@ virt-install "${DRYRUN[@]}" \
   --controller type=usb,model=qemu-xhci \
   --redirdev usb,type=spicevmc \
   --redirdev usb,type=spicevmc \
+  "${HOSTDEV[@]}" \
+  --xml './devices/redirfilter/usbdev[1]/@class=0x03' \
+  --xml './devices/redirfilter/usbdev[1]/@allow=no' \
+  --xml './devices/redirfilter/usbdev[2]/@allow=yes' \
   --memballoon virtio \
   --sound none \
   --noautoconsole

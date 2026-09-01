@@ -205,11 +205,36 @@ CX-One and installs during step 5, so this usually just works and the cable
 appears as a COM port. Check in Device Manager which COM number it got, and
 point CX-Programmer's *Change PLC → Network Type: USB/Serial* at it.
 
-Once the VID:PID is known, it can be pinned permanently instead of redirected
-by hand each time — in virt-manager, **Add Hardware → USB Host Device**. Add
-`startupPolicy='optional'` to that `<hostdev>` (via `virsh edit cxone`) or the
-guest refuses to start whenever the cable is not plugged in, which is most of
-the time.
+This is now pinned permanently rather than redirected by hand each session. The
+CP1H reports as:
+
+    Bus 003 Device 007: ID 0590:005b Omron Corp. OMRON-PLC
+
+and the domain carries:
+
+```xml
+<hostdev mode='subsystem' type='usb' managed='yes'>
+  <source startupPolicy='optional'>
+    <vendor id='0x0590'/>
+    <product id='0x005b'/>
+  </source>
+</hostdev>
+```
+
+`startupPolicy='optional'` is not decoration — without it libvirt refuses to
+start the domain whenever the cable is unplugged, which is most of the time.
+
+The persistent config carries **no host bus/device address**, only the VID:PID,
+so the cable keeps working across ports and through the hub it shares with the
+keyboard. `virsh dumpxml` on a *running* domain shows a resolved
+`<address bus='3' device='7'/>`; that is the live binding, not the stored one —
+check with `--inactive` before concluding anything is port-bound.
+
+To re-add it on a rebuilt guest, with the cable connected:
+
+```fish
+virsh -c qemu:///system attach-device cxone plc-hostdev.xml --live --config
+```
 
 #### Hubs, extenders, and which port
 
@@ -232,8 +257,9 @@ Two physical-layer caveats, which matter more than the virtualisation:
 - **Use a powered hub** if the converter draws bus power.
 
 And guard the keyboard: the redirect menu will hand it to the guest if
-misclicked. A filter on the domain makes that impossible — `virsh edit cxone`,
-inside `<devices>`:
+misclicked. That is not hypothetical here — the PLC sits on the same Genesys
+hub as the keyboard (`05e3:0610`, bus 3), so both appear in the same menu. The
+domain therefore carries a filter, applied at guest restart:
 
 ```xml
 <redirfilter>
