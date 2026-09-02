@@ -498,6 +498,70 @@ in
     "2606:4700:4700::1001#cloudflare-dns.com"
   ];
 
+  # ── WARP's own health check needs a name only WARP can answer.
+  #
+  # Symptom: `warp up` succeeds, then `warp status` flips to
+  #
+  #   Status update: Unable
+  #   Reason: Connectivity check failed due to DNS Lookup Failed
+  #
+  # and `warp down` comes back with "The IPC call hit a timeout" — the
+  # disconnect is not lost, it just queues behind main_loop's reconnect backoff
+  # and lands ~50s later. Intermittent: sometimes the same `warp up` connects.
+  #
+  # warp-svc probes its own DNS proxy by resolving the synthetic name
+  # `connectivity-check.warp-svc.`, which only its proxy on 127.0.2.2/127.0.2.3
+  # knows. It expects that proxy to be the system resolver by then. On this box
+  # it never is, for two reasons that compound:
+  #
+  #   1. WARP cannot read our systemd version. It parses the version slug
+  #      expecting Debian's `255-1ubuntu2` shape; NixOS reports a bare `261`,
+  #      so `parse_systemd_version_string` fails with "could not find '-' in
+  #      version slug: '261'", `version_supports_dbus_config` errors out, and
+  #      `determine_owner` falls back to os_configuration_owner=File. Had it
+  #      succeeded, WARP would have registered 127.0.2.2 with resolved over
+  #      D-Bus as a link scope on CloudflareWARP and none of this would happen.
+  #   2. The file-based fallback it takes instead — overwriting
+  #      /etc/resolv.conf with `nameserver 127.0.2.2` — is a no-op for glibc
+  #      here, for exactly the reason documented at the top of the DNS section:
+  #      nsswitch is `resolve [!UNAVAIL=return] ... dns`, so resolved answers
+  #      first and the `dns` module that would read resolv.conf is unreachable.
+  #
+  # So the probe goes to resolved, which has never heard of `.warp-svc`, and
+  # comes back NXDOMAIN → "Name or service not known" → Unable.
+  #
+  # Why it is intermittent: resolved runs in `foreign` resolv.conf mode, so WARP
+  # clobbering that file makes resolved reload its uplink config. During that
+  # reload nss-resolve returns UNAVAIL instead of an answer, the
+  # `[!UNAVAIL=return]` guard does not fire, and glibc falls through to `dns`
+  # → 127.0.2.2 → the probe succeeds. It is a race against resolved settling,
+  # measured in milliseconds: an observed failing run probed 227ms after the
+  # rewrite (resolved settled, NXDOMAIN), a passing run probed 4ms after.
+  #
+  # In practice it has only been seen failing on wifi alone, and the passing run
+  # happened to have the USB tether up as well. That may be real — a second link
+  # means an extra NetworkInfoChanged and a differently-timed reload — or it may
+  # just be which side of the race each run landed on; one sample per condition
+  # cannot tell them apart. It does not change the fix either way: the mechanism
+  # is in nsswitch and resolved, not in any particular link, so removing the
+  # dependency on that race covers both.
+  #
+  # The fix: give resolved the answer. resolved synthesises records from
+  # /etc/hosts before it ever queries an uplink, so nss-resolve returns success
+  # and the probe sees the same two proxy addresses WARP would have handed it.
+  # The addresses are WARP's fixed loopback proxy pair, not allocated per-run.
+  #
+  # This fixes the probe, not the clobbering — WARP still rewrites
+  # /etc/resolv.conf on connect and restores the symlink on a clean disconnect.
+  # That is harmless here: services.resolved's explicit DNS= above outranks the
+  # foreign file, and dns-leak-guard lets 127.0.0.0/8 through regardless. But if
+  # warp-svc is ever SIGKILLed mid-connection the file is left behind as a
+  # regular file; `systemctl restart systemd-resolved` puts the symlink back.
+  networking.extraHosts = ''
+    127.0.2.2 connectivity-check.warp-svc
+    127.0.2.3 connectivity-check.warp-svc
+  '';
+
   networking.firewall.allowedTCPPorts = [ 4321 ];
   networking.firewall.allowedUDPPorts = [
     4321   # optional, untuk mDNS/SSDP discovery
