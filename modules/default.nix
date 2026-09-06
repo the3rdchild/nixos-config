@@ -21,6 +21,7 @@
     ./vm-network.nix
     ./filesystems.nix
     ./automount.nix
+    ./mtp.nix
     ./acer-ec.nix
     ./mousekeys.nix
     ./acer-ec-web.nix
