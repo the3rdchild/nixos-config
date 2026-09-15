@@ -11,6 +11,7 @@
   services.cloudflare-warp.enable = true;
   services.flatpak.enable = true;
   services.tailscale.enable = true;
+  services.locate.enable = true;
 
   # Was on via plasma6's mkDefault and went away with it. Nothing else here
   # depends on it — `fwupdmgr` is a CLI, so it costs nothing to keep and is
