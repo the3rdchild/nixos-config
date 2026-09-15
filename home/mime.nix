@@ -1,0 +1,128 @@
+{ pkgs, lib, ... }:
+let
+  zen = "app.zen_browser.zen.desktop";
+  micro = "micro-foot.desktop";
+  ark = "org.kde.ark.desktop";
+
+  assoc = app: types: lib.genAttrs types (_: [ app ]);
+in
+{
+  # Dolphin's "Open with" dialog was empty and every double-click fell back to
+  # it. KService (kbuildsycoca6) only indexes .desktop files reachable from an
+  # XDG menu, and with plasma6 gone nothing ships applications.menu anymore.
+  # This minimal menu includes every desktop entry from $XDG_DATA_DIRS.
+  xdg.configFile."menus/applications.menu".text = ''
+    <!DOCTYPE Menu PUBLIC "-//freedesktop//DTD Menu 1.0//EN"
+     "http://www.freedesktop.org/standards/menu-spec/menu-1.0.dtd">
+    <Menu>
+      <Name>Applications</Name>
+      <DefaultAppDirs/>
+      <DefaultDirectoryDirs/>
+      <DefaultMergeDirs/>
+      <Include><All/></Include>
+    </Menu>
+  '';
+
+  home.packages = [ pkgs.kdePackages.ark ];
+
+  # micro has no .desktop file of its own; run it inside foot.
+  xdg.desktopEntries.micro-foot = {
+    name = "Micro (foot)";
+    exec = "foot micro %F";
+    terminal = false;
+    icon = "accessories-text-editor";
+    mimeType = [ "text/plain" ];
+  };
+
+  # Dolphin right-click → "Open with VS Code", for files and folders. KIO
+  # refuses service menus that aren't executable. Launched in its own
+  # app-code-* scope like SUPER+SHIFT+V, so the memory cap still applies.
+  xdg.dataFile."kio/servicemenus/open-with-code.desktop" = {
+    executable = true;
+    text = ''
+      [Desktop Entry]
+      Type=Service
+      MimeType=all/all;inode/directory;
+      Actions=openWithCode;
+      X-KDE-Priority=TopLevel
+
+      [Desktop Action openWithCode]
+      Name=Open with VS Code
+      Icon=vscode
+      Exec=sh -c 'systemd-run --user --scope --collect --slice=app.slice --unit=app-code-$(date +%%s%%N) code "$@"' _ %F
+    '';
+  };
+
+  # Overwrites the old hand-edited ~/.config/mimeapps.list (kept as .backup).
+  xdg.mimeApps = {
+    enable = true;
+    defaultApplications =
+      assoc zen [
+        "application/pdf"
+        "image/png"
+        "image/jpeg"
+        "image/gif"
+        "image/webp"
+        "image/svg+xml"
+        "image/avif"
+        "image/bmp"
+        # Zen plays web formats only; mkv/avi are left unassigned.
+        "video/mp4"
+        "video/webm"
+        "video/ogg"
+        "audio/mpeg"
+        "audio/ogg"
+        "audio/flac"
+        "audio/wav"
+        "audio/x-wav"
+        "audio/mp4"
+        "audio/aac"
+        "audio/opus"
+      ]
+      // assoc "writer.desktop" [
+        "application/msword"
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        "application/vnd.oasis.opendocument.text"
+        "application/rtf"
+      ]
+      // assoc "calc.desktop" [
+        "application/vnd.ms-excel"
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        "application/vnd.oasis.opendocument.spreadsheet"
+        "text/csv"
+      ]
+      // assoc "impress.desktop" [
+        "application/vnd.ms-powerpoint"
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        "application/vnd.oasis.opendocument.presentation"
+      ]
+      // assoc ark [
+        "application/zip"
+        "application/x-tar"
+        "application/x-compressed-tar"
+        "application/x-bzip2-compressed-tar"
+        "application/x-xz-compressed-tar"
+        "application/zstd"
+        "application/x-7z-compressed"
+        "application/vnd.rar"
+        "application/gzip"
+      ]
+      // assoc micro [
+        "text/plain"
+        "text/markdown"
+        "text/x-nix"
+        "application/json"
+        "application/x-yaml"
+        "application/toml"
+        "application/x-shellscript"
+        "text/x-python"
+        "application/xml"
+      ]
+      // {
+        "x-scheme-handler/http" = [ "microsoft-edge.desktop" ];
+        "x-scheme-handler/https" = [ "microsoft-edge.desktop" ];
+        "x-scheme-handler/claude-cli" = [ "claude-code-url-handler.desktop" ];
+        "x-scheme-handler/heroic" = [ "com.heroicgameslauncher.hgl.desktop" ];
+      };
+  };
+}

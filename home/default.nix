@@ -6,6 +6,7 @@
     ./git.nix
     ./starship.nix
     ./kitty.nix
+    ./mime.nix
     ./caelestia.nix
     ./onboard.nix
     ./themes.nix
