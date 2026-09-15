@@ -7,6 +7,7 @@
     ./starship.nix
     ./kitty.nix
     ./mime.nix
+    ./zen.nix
     ./caelestia.nix
     ./onboard.nix
     ./themes.nix
