@@ -147,8 +147,12 @@ in
         "application/xml"
       ]
       // {
-        "x-scheme-handler/http" = [ "microsoft-edge.desktop" ];
-        "x-scheme-handler/https" = [ "microsoft-edge.desktop" ];
+        "x-scheme-handler/http" = [ zen ];
+        "x-scheme-handler/https" = [ zen ];
+        "x-scheme-handler/about" = [ zen ];
+        "x-scheme-handler/unknown" = [ zen ];
+        "text/html" = [ zen ];
+        "application/xhtml+xml" = [ zen ];
         "x-scheme-handler/claude-cli" = [ "claude-code-url-handler.desktop" ];
         "x-scheme-handler/heroic" = [ "com.heroicgameslauncher.hgl.desktop" ];
       };
