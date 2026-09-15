@@ -53,6 +53,34 @@ in
     '';
   };
 
+  # Dolphin right-click → "Open in Local Web Player": opens the folder (or a
+  # file's parent folder) in Zen. The player (/mnt/doc/local-web-player) loads
+  # a path from the URL hash — see public/js/main.js, `fromHash`.
+  xdg.dataFile."kio/servicemenus/open-in-web-player.desktop" = {
+    executable = true;
+    text =
+      let
+        open = pkgs.writeShellScript "open-in-web-player" ''
+          p="$1"
+          [ -d "$p" ] || p="$(dirname "$p")"
+          hash="$(${pkgs.python3}/bin/python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe="/"))' "$p")"
+          exec flatpak run app.zen_browser.zen "http://localhost:4321/#$hash"
+        '';
+      in
+      ''
+        [Desktop Entry]
+        Type=Service
+        MimeType=all/all;inode/directory;
+        Actions=openInWebPlayer;
+        X-KDE-Priority=TopLevel
+
+        [Desktop Action openInWebPlayer]
+        Name=Open in Local Web Player
+        Icon=multimedia-player
+        Exec=${open} %f
+      '';
+  };
+
   # Overwrites the old hand-edited ~/.config/mimeapps.list (kept as .backup).
   xdg.mimeApps = {
     enable = true;
