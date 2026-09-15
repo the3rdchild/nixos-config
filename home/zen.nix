@@ -10,5 +10,12 @@
     // clipboard via navigator.clipboard (CTRL+SHIFT+V in web editors).
     // Only clipboard reads — camera/mic/location/notification prompts stay.
     user_pref("dom.events.testing.asyncClipboard", true);
+
+    // Block notification permission prompts for every new site. Spam sites
+    // (judol / "JACKPOT" / scratch-card pushes, Aug 2026) get push access by
+    // tricking a click on "Allow". Sites already allowed in permissions.sqlite
+    // (WhatsApp, YouTube, rumahweb) keep working; add more from the site's
+    // padlock menu → Permissions.
+    user_pref("permissions.default.desktop-notification", 2);
   '';
 }
