@@ -81,6 +81,14 @@ in
       '';
   };
 
+  # Dolphin's "Open Terminal Here" (ALT+SHIFT+F4) reads the terminal from
+  # kdeglobals and fell back to xterm. KDE apps rewrite kdeglobals at runtime
+  # (colour scheme, accent), so only these two keys are set, not the file.
+  home.activation.kdeTerminal = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+    run ${pkgs.kdePackages.kconfig}/bin/kwriteconfig6 --file kdeglobals --group General --key TerminalApplication foot
+    run ${pkgs.kdePackages.kconfig}/bin/kwriteconfig6 --file kdeglobals --group General --key TerminalService foot.desktop
+  '';
+
   # Overwrites the old hand-edited ~/.config/mimeapps.list (kept as .backup).
   xdg.mimeApps = {
     enable = true;
