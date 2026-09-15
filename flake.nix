@@ -32,7 +32,7 @@
     # `version = "1.0.0"` placeholder. Changing this line and re-locking is
     # enough; there is no second copy of the version to keep in sync.
     caelestia-shell = {
-      url = "github:caelestia-dots/shell/v2.3.0";
+      url = "github:caelestia-dots/shell/v2.4.0";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 

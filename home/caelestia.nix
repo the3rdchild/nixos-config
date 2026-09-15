@@ -90,7 +90,15 @@
     (inputs.caelestia-shell.inputs.quickshell.packages.${pkgs.stdenv.hostPlatform.system}.default.override {
       withX11 = false;
       withI3 = false;
-    }).withModules [ pkgs.qt6.qtimageformats ];
+    }).withModules [ pkgs.qt6.qtimageformats m3shapes ];
+
+  # Material shapes QML module (bar workspace indicators, since v2.4.0).
+  # Upstream split it into its own flake; nix/default.nix now takes the built
+  # package and adds it to quickshell's withModules, rather than the raw source
+  # CMake used to FetchContent. Passing the source instead fails evaluation
+  # with "Dependency is not of a valid type" in quickshell-wrapped.
+  m3shapes =
+    inputs.caelestia-shell.inputs.m3shapes.packages.${pkgs.stdenv.hostPlatform.system}.default;
   # ── The version string nexus → About reports.
   #
   # Upstream's nix/default.nix hardcodes `version = "1.0.0"` and hands it to
@@ -320,7 +328,7 @@ import qs.modules.nexus.pages.display' \
   # binary whose IPC does not match. withCli = true matches the `with-cli`
   # output the home-manager module defaults to.
   caelestiaShell = pkgs.callPackage "${shellSrc}/nix" {
-    inherit (inputs.caelestia-shell.inputs) m3shapes;
+    inherit m3shapes;
     rev = inputs.caelestia-shell.rev or inputs.caelestia-shell.dirtyRev;
     stdenv = pkgs.clangStdenv;
     quickshell =
