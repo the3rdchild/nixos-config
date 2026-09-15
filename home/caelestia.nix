@@ -464,6 +464,12 @@ in {
           cursorTheme  = "${config.themes.activeCursor}",
           cursorSize   = 24,
 
+          -- rules.lua widens gaps_out to singleWindowGapsOut on a normal
+          -- workspace holding one window (w[tv1]s[false] / f[1]s[false]), so a
+          -- lone window sat further from the bar than on special workspaces
+          -- or with 2+ windows. Match windowGapsOut so every case looks alike.
+          singleWindowGapsOut = 10,
+
           -- ── iGPU relief (Aug 2026).
           --
           -- The Alder Lake-P GT1 composites both 1080p high-refresh outputs
@@ -606,6 +612,11 @@ in {
       -- home/app-limits.nix applies; a bare exec would land in no scope.
       hl.bind("SUPER + SHIFT + Z", hl.dsp.exec_cmd("flatpak run app.zen_browser.zen"))
       hl.bind("SUPER + SHIFT + V", hl.dsp.exec_cmd("systemd-run --user --scope --collect --slice=app.slice --unit=app-code-$(date +%s%N) code"))
+
+      -- SUPER+SHIFT+O → Obsidian (modules/package.nix). Free combo too:
+      -- nothing in upstream keybinds.lua or `hyprctl binds` uses O. Obsidian
+      -- is Electron and focuses its running window when invoked again.
+      hl.bind("SUPER + SHIFT + O", hl.dsp.exec_cmd("obsidian"))
 
       -- Render the OSK beneath the shell's panels. The wvkbd override in the
       -- Nix let block moves it from the overlay level down to `top`, where
