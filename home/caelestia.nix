@@ -601,9 +601,11 @@ in {
       -- for its memory cap), launched via `flatpak run` rather than the
       -- ~/.local/share/flatpak/exports/bin wrapper so the bind does not depend
       -- on that export dir being in the compositor's inherited PATH.
-      -- `code` comes from modules/package.nix, on the system profile.
+      -- `code` comes from modules/package.nix, on the system profile. It is
+      -- started in its own app-code-* scope so the memory cap in
+      -- home/app-limits.nix applies; a bare exec would land in no scope.
       hl.bind("SUPER + SHIFT + Z", hl.dsp.exec_cmd("flatpak run app.zen_browser.zen"))
-      hl.bind("SUPER + SHIFT + V", hl.dsp.exec_cmd("code"))
+      hl.bind("SUPER + SHIFT + V", hl.dsp.exec_cmd("systemd-run --user --scope --collect --slice=app.slice --unit=app-code-$(date +%s%N) code"))
 
       -- Render the OSK beneath the shell's panels. The wvkbd override in the
       -- Nix let block moves it from the overlay level down to `top`, where

@@ -31,12 +31,33 @@
   # Swap is left uncapped on purpose. MemorySwapMax=0 removes the graceful
   # valve and turns every overshoot into an OOM kill.
   #
-  # Changes here need `systemctl --user daemon-reload` and a Zen restart —
+  # Changes here need `systemctl --user daemon-reload` and an app restart —
   # home-manager writes the file but does not reload the user manager for
   # plain config files.
-  xdg.configFile."systemd/user/app-flatpak-app.zen_browser.zen-.scope.d/50-memory.conf".text = ''
-    [Scope]
-    MemoryHigh=2.5G
-    MemoryMax=4G
-  '';
+  #
+  # The same drop-in covers the other apps used to test the web app. Their
+  # scopes are named app-<desktop id>-<suffix> by the launcher (or by the
+  # systemd-run wrapper on the SUPER+SHIFT+V bind in ./caelestia.nix, for
+  # code), so the same trailing-dash prefix matches every instance. An app
+  # started with no scope at all runs straight in the session cgroup and
+  # escapes these limits — that is why the code bind is wrapped.
+  #
+  # VS Code gets more headroom than the browsers: throttling it lands on the
+  # TypeScript server and extension host, which shows up as typing lag. The
+  # writer-hub `next dev` container lives in Docker's cgroup, not here.
+  xdg.configFile = let
+    limit = high: max: {
+      text = ''
+        [Scope]
+        MemoryHigh=${high}
+        MemoryMax=${max}
+      '';
+    };
+    dropIn = scope: "systemd/user/${scope}.scope.d/50-memory.conf";
+  in {
+    ${dropIn "app-flatpak-app.zen_browser.zen-"} = limit "1.5G" "2.5G";
+    ${dropIn "app-firefox-"} = limit "1G" "2G";
+    ${dropIn "app-microsoft-edge-"} = limit "1G" "2G";
+    ${dropIn "app-code-"} = limit "2G" "3.5G";
+  };
 }
