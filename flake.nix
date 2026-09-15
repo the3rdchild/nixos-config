@@ -61,6 +61,19 @@
       url = "github:BlueManCZ/hyprmod/c1edad16510538190f65cde0f27fc2825045ce04";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+
+    # ── SilentSDDM, the login screen theme.
+    #
+    # Not in nixpkgs. The flake exports nixosModules.default
+    # (-> programs.silentSDDM), which builds the theme with the chosen preset,
+    # settings overrides and extra backgrounds baked into the store path.
+    # Pinned to a release tag for the same reason as caelestia-shell: the
+    # module forces sddm options (theme, wayland.enable, GreeterEnvironment)
+    # that modules/sddm.nix has to agree with, so bumps should be read first.
+    silent-sddm = {
+      url = "github:uiriansan/SilentSDDM/v1.5.0";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs = inputs@{ self, nixpkgs, home-manager, ... }: {

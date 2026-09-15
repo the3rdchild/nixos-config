@@ -1,14 +1,42 @@
-{ config, pkgs, ... }:
+{ config, inputs, lib, pkgs, ... }:
 
-let
-  custom-sddm-astronaut = pkgs.sddm-astronaut.override {
-    # astronaut, black_hole, cyberpunk, hyprland_kath, jake_the_dog,
-    # japanese_aesthetic, pixel_sakura, pixel_sakura_static,
-    # post-apocalyptic_hacker, purple_leaves
-    embeddedTheme = "pixel_sakura";
+{
+  imports = [ inputs.silent-sddm.nixosModules.default ];
+
+  # ── SilentSDDM.
+  #
+  # The module sets services.displayManager.sddm.enable, theme = "silent",
+  # package (mkDefault kdePackages.sddm), extraPackages (the theme's
+  # qtmultimedia / qtsvg / qtvirtualkeyboard / qtimageformats) and the
+  # GreeterEnvironment that points QML2_IMPORT_PATH at the theme's components.
+  # It also installs `test-sddm-silent`, which previews the configured theme in
+  # a window — run it after a rebuild, before logging out.
+  programs.silentSDDM = {
+    enable = true;
+    # One of configs/<name>.conf upstream: default, default-left,
+    # default-right, rei, ken, silvia, catppuccin-{latte,frappe,macchiato,mocha},
+    # eldritch-{abyss,cthulhu,dusk}, everforest, gruvbox, nord.
+    theme = "default";
+
+    # Backgrounds are copied into the theme's backgrounds/ directory at build
+    # time, and the theme only ever loads "backgrounds/" + <name> — there is no
+    # way to point it at an absolute path at runtime. The image lives in the
+    # repo rather than being read from /mnt/shared because flake evaluation is
+    # pure: an absolute path outside the flake is refused ("access to absolute
+    # path ... is forbidden in pure evaluation mode"). It must be git-tracked
+    # for the flake to see it at all.
+    #
+    # The attribute name is only a label; the file keeps its basename.
+    backgrounds.kokomi = ../assets/sddm/kokomi.jpg;
+
+    # Overrides on top of the preset. Keys map to [sections] of the conf file;
+    # full list: https://github.com/uiriansan/SilentSDDM/wiki/Options
+    settings = {
+      "LockScreen".background = "kokomi.jpg";
+      "LoginScreen".background = "kokomi.jpg";
+    };
   };
 
-in {
   services.xserver.enable = true;
 
   # ── What plasma6 used to provide.
@@ -22,32 +50,29 @@ in {
   #
   # "kwin" here means the kwin_wayland binary alone, not a Plasma session —
   # roughly one package, against the ~35 the desktop manager pulled in.
-  #
-  # The sddm-astronaut theme needs nothing from Plasma: the derivation
-  # propagates its own qtsvg / qtmultimedia / qtvirtualkeyboard, and
-  # services.displayManager.sddm.package already defaults to kdePackages.sddm.
   services.displayManager.defaultSession = "hyprland";
 
   services.displayManager.sddm = {
-    enable = true;
     autoNumlock = true;
     enableHidpi = true;
 
     wayland = {
-      enable = true;
+      # mkForce: SilentSDDM's module sets wayland.enable = !xserver.enable at
+      # normal priority, which with xserver enabled above is `false` and would
+      # conflict with (or, without this line, silently undo) the Wayland
+      # greeter.
+      enable = lib.mkForce true;
       compositor = "kwin";
     };
-    theme = "sddm-astronaut-theme";
+
+    # Theme.Current is not set here: the sddm module derives it from `theme`,
+    # which programs.silentSDDM sets to "silent".
     settings = {
       Theme = {
-        Current = "sddm-astronaut-theme";
         CursorTheme = "Bibata-Modern-Ice";
         CursorSize = 24;
       };
     };
-    extraPackages = with pkgs; [
-      custom-sddm-astronaut
-    ];
   };
 
   # ── The greeter's mouse cursor.
@@ -69,13 +94,7 @@ in {
   # list. plasma6 turned it on; restored here for the same reason as above.
   services.accounts-daemon.enable = true;
 
-  # The theme has to land in ThemeDir (/run/current-system/sw/share/sddm/themes)
-  # to be found; extraPackages alone only covers the greeter's own runtime
-  # path. No Qt module is listed alongside it — the sddm-astronaut derivation
-  # propagates qtsvg / qtmultimedia / qtvirtualkeyboard itself, so the explicit
-  # kdePackages.qtmultimedia that used to sit here was redundant.
-  environment.systemPackages = [
-    custom-sddm-astronaut
-    pkgs.bibata-cursors
-  ];
+  # The theme package itself reaches ThemeDir through the SilentSDDM module's
+  # environment.systemPackages; only the cursor theme is added here.
+  environment.systemPackages = [ pkgs.bibata-cursors ];
 }
