@@ -569,6 +569,20 @@ import qs.modules.nexus.pages.display' \
                 command: ["${pkgs.uwsm}/bin/uwsm", "app", "-a", entry.id, "--", ...entry.command],
                 workingDirectory: entry.workingDirectory
             });'
+
+    # Session panel opens with Shutdown focused instead of Logout, so
+    # SUPER+X (hypr-user.lua) → Enter powers off, and up/down still walks the
+    # buttons. Applies to every way of opening it (CTRL+ALT+Delete too). Only
+    # the initial and after-launcher focus target move; button order and
+    # KeyNavigation stay upstream's. Both handlers sit inside the logout
+    # button, but `shutdown` is an id in the same component, so it resolves.
+    substituteInPlace $out/modules/session/Content.qml \
+      --replace-fail \
+        'Component.onCompleted: forceActiveFocus()' \
+        'Component.onCompleted: shutdown.forceActiveFocus()' \
+      --replace-fail \
+        'logout.forceActiveFocus();' \
+        'shutdown.forceActiveFocus();'
   '';
 
   # Rebuild from the patched tree rather than overriding the flake's package:
@@ -1278,6 +1292,17 @@ in {
       -- VS Code is already on SUPER+SHIFT+V above, and the colour picker stays
       -- on upstream's SUPER+SHIFT+C. Unbind for the same reason as SUPER+W.
       hl.unbind("SUPER + C")
+
+      # -- CHANGE SUPER+X to open the session (power) panel rather than resize windows.
+      # -- SUPER+X → session (power) panel, same toggle as upstream's
+      # -- CTRL+ALT+Delete, so a second press closes it. Opens with Shutdown
+      # -- focused (Content.qml patch in shellSrc), Enter confirms.
+      # --
+      # -- Upstream had SUPER+X as vars.kbResizeWindow (keybinds.lua:105), a
+      # -- hold-and-move mouse resize that duplicates SUPER + right-drag, which
+      # -- is the one in use. Unbind first — binds on one combo stack.
+      # hl.unbind("SUPER + X")
+      # hl.bind("SUPER + X", hl.dsp.global("caelestia:session"))
 
       -- SUPER+SHIFT+O → Obsidian (modules/package.nix). Free combo too:
       -- nothing in upstream keybinds.lua or `hyprctl binds` uses O. Obsidian
