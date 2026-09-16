@@ -1438,8 +1438,11 @@ in {
     fastfetch
     micro
 
-    # Launched from execs.lua / bound in keybinds.lua
-    thunar
+    # Launched from execs.lua / bound in keybinds.lua. No thunar: SUPER+E is
+    # dolphin (hypr-vars.lua), and thunar's DBus service claimed
+    # org.freedesktop.FileManager1 ahead of dolphin's (per-user profile comes
+    # first in XDG_DATA_DIRS), so VSCode "Reveal in File Explorer" and the
+    # recording notification's "Open" both landed in thunar.
     hyprpicker
     pavucontrol # CTRL+ALT+V (vars.audioSettings)
     pwvucontrol # SUPER+B via volume-control-toggle (let block above)

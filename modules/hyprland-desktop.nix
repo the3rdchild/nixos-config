@@ -87,7 +87,19 @@
   # unit behind on every login.
   environment.systemPackages = with pkgs; [
     xdg-desktop-portal-hyprland
-    xdg-desktop-portal-gtk # file pickers for GTK apps under Hyprland
+    xdg-desktop-portal-gtk # Settings backend (colour scheme); see ../home/vscode.nix
+    kdePackages.xdg-desktop-portal-kde # file picker, see xdg.portal.config below
     xdg-user-dirs # screenshot/recording paths resolve through this
   ];
+
+  # Same order xdg-desktop-portal-hyprland ships in hyprland-portals.conf, plus
+  # one override: the file picker comes from kde instead of gtk. VS Code's
+  # Open Folder, Zen's upload/save dialogs, OBS etc. all ask the portal, and
+  # the gtk picker looked like thunar next to dolphin; the kde one shares
+  # dolphin's KIO places sidebar and icons. Everything else (screencast,
+  # screenshot, settings) stays hyprland;gtk.
+  xdg.portal.config.hyprland = {
+    default = [ "hyprland" "gtk" ];
+    "org.freedesktop.impl.portal.FileChooser" = [ "kde" ];
+  };
 }

@@ -156,6 +156,8 @@ in
         "application/xml"
       ]
       // {
+        # Unset, xdg-open on a folder fell through mimeinfo.cache to kitty-open.
+        "inode/directory" = [ "org.kde.dolphin.desktop" ];
         "x-scheme-handler/http" = [ zen ];
         "x-scheme-handler/https" = [ zen ];
         "x-scheme-handler/about" = [ zen ];
