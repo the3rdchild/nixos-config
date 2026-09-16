@@ -381,15 +381,17 @@ offered in the greeter as the fallback, and it never reaches
 light following in that session. The comments in both files now describe
 both sessions. Revisit if the fallback session is ever removed.
 
-### 2.4 App launches into scopes — applied, not verified
+### 2.4 App launches into scopes — applied, VS Code verified
 
 Before this step, the caelestia launcher called `DesktopEntry.execute()`, a
 bare detached QProcess. Launched apps lived in the shell's cgroup
 (`caelestia.service` under UWSM, the login session scope otherwise), outside
 the `app-*.scope` drop-ins in `home/app-limits.nix`. Only the SUPER+SHIFT+V
 bind and Dolphin's "Open with VS Code" made a scope, with a hand-rolled
-`systemd-run --user --scope --unit=app-code-…`. The `app-firefox-` and
-`app-microsoft-edge-` drop-ins matched nothing at all.
+`systemd-run --user --scope --unit=app-code-…`. Electron and Chromium apps
+were partly covered anyway: they move their main process into their own
+`app-<CHROME_DESKTOP id>-<pid>.scope`. That's where VS Code's main process and
+extension hosts live, and `app-code-` matched it.
 
 #### What was applied
 
@@ -402,17 +404,33 @@ bind and Dolphin's "Open with VS Code" made a scope, with a hand-rolled
   launcher doesn't depend on `withUWSM` staying on.
 - **VS Code bind and Dolphin service menu:** `uwsm app -- code` (`… code %F`
   in `home/mime.nix`).
-- **Drop-ins renamed** (`home/app-limits.nix`): uwsm names scopes
+- **Drop-ins added** (`home/app-limits.nix`): uwsm names scopes
   `app-<first XDG_CURRENT_DESKTOP>-<id or command>-<8 hex>.scope` in
-  `app-graphical.slice`, and escapes `-` inside the name as `\x2d`:
+  `app-graphical.slice`, and escapes `-` inside the name as `\x2d`. The
+  old names **stay**, because an Electron/Chromium app launched through uwsm
+  ends up in two scopes at once:
 
   | Drop-in dir | Matches |
   |---|---|
-  | `app-Hyprland-code-.scope.d` | `code` from the bind, the service menu, the launcher |
-  | `app-Hyprland-firefox-.scope.d` | Firefox from the launcher |
+  | `app-Hyprland-code-.scope.d` | uwsm scope for `code` (bind, service menu, launcher): zygote and renderers |
+  | `app-code-.scope.d` | VS Code's self-created `app-code-<pid>.scope`: main process and extension hosts |
+  | `app-Hyprland-firefox-.scope.d` / `app-firefox-.scope.d` | Firefox from the launcher / from KIO (Dolphin) |
   | `app-Hyprland-microsoft\x2dedge-.scope.d` | Edge via `microsoft-edge.desktop` (literal backslash) |
   | `app-Hyprland-com.microsoft.Edge-.scope.d` | Edge via `com.microsoft.Edge.desktop`; both entries are installed |
+  | `app-microsoft-edge-.scope.d` | Edge's self-created scope, assuming Chromium's `CHROME_DESKTOP` naming (not observed yet) |
   | `app-flatpak-app.zen_browser.zen-.scope.d` | Unchanged: `flatpak run` moves Zen into its own `app-flatpak-…` scope, whoever launched it |
+
+  **First try got this wrong.** It renamed `app-code-` to
+  `app-Hyprland-code-` and dropped the old names. After the switch, VS Code
+  from SUPER+SHIFT+V showed its zygote and renderers (1.0 G) correctly capped
+  in `app-Hyprland-code-452a65ec.scope`. Its main process and extension hosts
+  (1.4 G) had moved themselves into `app-code-43824.scope` (43824 = main PID,
+  `CHROME_DESKTOP=code.desktop`) with `MemoryHigh=infinity`. Journal history
+  shows the same self-created pattern for `app-obsidian-` and
+  `app-org.chromium.Chromium-`. Each scope carries its own copy of the limit,
+  so the effective ceiling for such an app is the sum of the two. That was
+  already true before, when the SUPER+SHIFT+V wrapper scope was `app-code-`
+  too.
 
 - **Tested before switching:**
   - A dummy `uwsm app -a microsoft-edge -- sleep` became
@@ -451,8 +469,12 @@ end
 - [ ] Launcher apps land in `app-Hyprland-<id>-….scope`, not in
       `caelestia.service` (`systemd-cgls --user-unit caelestia` shows only the
       shell and its helpers)
-- [ ] VS Code, Firefox and Edge scopes list their `50-memory.conf` in
-      `DropInPaths`
+- [ ] VS Code: both `app-Hyprland-code-<hex>` and `app-code-<pid>` list
+      `50-memory.conf` and show a finite `MemoryHigh`. On the first try only
+      the uwsm scope did; see the note above.
+- [ ] Firefox and Edge from the launcher: their `app-Hyprland-…` scope lists
+      `50-memory.conf`. For Edge, also note the name of any self-created
+      `app-…-<pid>.scope` and whether it matched.
 - [ ] A `Terminal=true` entry (e.g. btop, micro) still opens in foot
 - [ ] Dolphin → "Open with VS Code" opens, in an `app-Hyprland-code-` scope
 

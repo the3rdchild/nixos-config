@@ -371,9 +371,11 @@ import qs.modules.nexus.pages.display' \
     # modules/launcher/services/Apps.qml launches with entry.execute(), a bare
     # detached QProcess. The app ends up in the shell's own cgroup: the
     # caelestia unit under UWSM, the login session's scope in the plain session.
-    # So the per-app memory drop-ins in ../home/app-limits.nix never matched
-    # anything started from the launcher, and every launched app was tied to
-    # the shell's process lifetime (hence KillMode=process on that unit).
+    # So the per-app memory drop-ins in ../home/app-limits.nix only reached
+    # the part of an Electron/Chromium app that moves itself into its own
+    # app-<id>-<pid>.scope, and never reached anything else. Every launched
+    # app was also tied to the shell's process lifetime (hence
+    # KillMode=process on that unit).
     #
     # Both branches now go through `uwsm app -a <desktop id> -- <command>`:
     # - The command is the one Quickshell already parsed (entry.command, field
