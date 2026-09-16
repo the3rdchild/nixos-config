@@ -333,6 +333,88 @@ import qs.modules.nexus.pages.display' \
                 if (parts.length >= 4) {
                     const state = parts[2] || "";'
 
+    # ── On-screen keyboard toggle in the bar (see services/Osk.qml).
+    #
+    # A new `osk` status icon, placed under bluetooth in the status pill.
+    # Four upstream files change: the StatusIcons delegate list gets the icon
+    # (a StateLayer button, same construction as the bar's Power button),
+    # Bar.qml's hover handler learns that an icon without a popout name has
+    # no popout (it used to open an empty one), the nexus Status icons page
+    # gets a label for it so it can be toggled and re-added there, and
+    # ServiceLoader forces the singleton to load at startup - otherwise the
+    # IpcHandler behind `caelestia shell osk toggle` only exists once the
+    # bar has instantiated the icon, and SUPER+SHIFT+K would be dead with the
+    # icon disabled.
+    #
+    # The default status-icon list lives in C++ (plugin barconfig.hpp), so
+    # that one line is the only change here that rebuilds the plugin. It only
+    # matters for a shell.json without an explicit `bar.statusIcons` list;
+    # the live file has one, so caelestiaShellOsk below merges the entry into
+    # it as well.
+    cp ${./caelestia/shell/services/Osk.qml} $out/services/Osk.qml
+
+    substituteInPlace $out/modules/bar/components/StatusIcons.qml --replace-fail \
+      '                DelegateChoice {
+                    roleValue: "battery"' \
+      '                DelegateChoice {
+                    roleValue: "osk"
+                    delegate: EntryWrapper {
+                        name: "" // no popout, see checkPopout in Bar.qml
+
+                        Item {
+                            implicitWidth: oskIcon.implicitWidth
+                            implicitHeight: oskIcon.implicitHeight
+
+                            StateLayer {
+                                anchors.fill: undefined
+                                anchors.centerIn: parent
+                                implicitWidth: implicitHeight
+                                implicitHeight: oskIcon.implicitHeight + Tokens.padding.small
+                                radius: Tokens.rounding.full
+                                onClicked: Osk.toggle()
+                            }
+
+                            MaterialIcon {
+                                id: oskIcon
+
+                                anchors.centerIn: parent
+
+                                animate: true
+                                text: Osk.visible ? "keyboard_hide" : "keyboard"
+                                color: Osk.visible ? Colours.palette.m3primary : root.colour
+                                fill: Osk.visible ? 1 : 0
+                            }
+                        }
+                    }
+                }
+                DelegateChoice {
+                    roleValue: "battery"'
+
+    substituteInPlace $out/modules/bar/Bar.qml --replace-fail \
+      '            const icon = items.childAt(items.width / 2, mapToItem(items, 0, y).y);
+            if (icon) {' \
+      '            const icon = items.childAt(items.width / 2, mapToItem(items, 0, y).y);
+            if (icon && !icon.name) {
+                popouts.hasCurrent = false; // icon without a popout (osk)
+            } else if (icon) {'
+
+    substituteInPlace $out/modules/nexus/pages/panels/taskbar/BarStatusIcons.qml --replace-fail \
+      '            bluetooth: qsTr("Bluetooth"),' \
+      '            bluetooth: qsTr("Bluetooth"),
+            osk: qsTr("On-screen keyboard"),'
+
+    substituteInPlace $out/modules/ServiceLoader.qml --replace-fail \
+      '        Brightness;' \
+      '        Brightness;
+        Osk;'
+
+    substituteInPlace $out/plugin/src/Caelestia/Config/barconfig.hpp --replace-fail \
+      '            LIST_ENTRY(bluetooth, true),
+            LIST_ENTRY(battery, true),' \
+      '            LIST_ENTRY(bluetooth, true),
+            LIST_ENTRY(osk, true),
+            LIST_ENTRY(battery, true),'
+
     # ── Keep rounded corners in game mode.
     #
     # services/GameMode.qml applies one fixed bundle of Hyprland overrides in
@@ -545,7 +627,8 @@ import qs.modules.nexus.pages.display' \
     fi
   '';
 
-  # ── SUPER+SHIFT+K → on-screen keyboard (wvkbd), show/hide toggle.
+  # ── On-screen keyboard (wvkbd): SUPER+SHIFT+K and the bar's `osk` status
+  # icon, both through the shell (services/Osk.qml, `caelestia shell osk`).
   #
   # wvkbd, not onboard, because onboard is an X11 app that types through
   # XTEST: under Hyprland its keystrokes only reach XWayland
@@ -559,20 +642,13 @@ import qs.modules.nexus.pages.display' \
   # position, and Hyprland has no layerrule for repositioning a layer — so this
   # cannot be dragged around the way a floating window can. Height only.
   #
-  # Exclusive zone left on (i.e. no --non-exclusive): the compositor shrinks
-  # the tiled area while the keyboard is up, so it never covers the very text
-  # field you are typing into. Add --non-exclusive below if you would rather it
-  # overlap windows and leave layout untouched.
-  #
-  # pkill exits 1 when nothing matched, which doubles as the "not started yet"
-  # branch — first press launches it visible, every press after that flips
-  # visibility via SIGRTMIN. Nothing runs at login.
-  oskToggle = pkgs.writeShellScriptBin "osk-toggle" ''
-    if ${pkgs.procps}/bin/pkill -RTMIN -x wvkbd-mobintl; then
-      exit 0
-    fi
-    exec ${wvkbdBelowShell}/bin/wvkbd-mobintl -H 300 --fn "Rubik 16"
-  '';
+  # The shell owns the process rather than a pkill-based toggle script: wvkbd
+  # has no IPC, so the only way for a bar icon to know whether the keyboard
+  # is up is to be the thing that sent it the last show/hide signal. Height
+  # (-L, the landscape one - -H is ignored on a landscape output), width
+  # (WVKBD_WIDTH, our own patch below), font and the --non-exclusive flag
+  # (float over windows, no exclusive zone) are set on the Process in
+  # Osk.qml. Nothing runs at login.
 
   # ── Keep the OSK underneath the shell's panels.
   #
@@ -589,10 +665,58 @@ import qs.modules.nexus.pages.display' \
   #
   # Landing on level 2 alongside caelestia's own surfaces, the ordering is then
   # decided by `order` — see the layer_rule in hypr-user.lua below.
+  #
+  # ── ...and narrower than the screen.
+  #
+  # wvkbd anchors its layer to BOTTOM|LEFT|RIGHT with a requested width of 0,
+  # so the compositor hands it the full output width and that becomes the
+  # keyboard's width - there is no -W flag and no WVKBD_WIDTH. The rest of
+  # the substitutions add that env var. Unset, the binary behaves exactly as
+  # upstream.
+  #
+  # Where the width has to be applied: show() first probes the output with
+  # a throwaway full-screen surface (refresh_available_dimension) and
+  # redimension_keyboard() copies that width into keyboard.w. The configure
+  # handler then treats any size that differs from keyboard.w as a stale
+  # event and does hide()+show() again - so just requesting a narrower
+  # surface makes it loop forever and never map (seen 2026-09-16: layer
+  # listed at full size with a:0). keyboard.w has to be the narrower width
+  # *before* the surface is created, and set_size/set_anchor follow it.
+  # Capped below the available width so the compositor can grant exactly
+  # what was asked for. With one anchor, layer-shell centres the surface
+  # along the other axis, so this lands bottom-centre without any
+  # positioning code.
   wvkbdBelowShell = pkgs.wvkbd.overrideAttrs (old: {
     postPatch = (old.postPatch or "") + ''
       substituteInPlace main.c \
-        --replace-fail ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY ZWLR_LAYER_SHELL_V1_LAYER_TOP
+        --replace-fail ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY ZWLR_LAYER_SHELL_V1_LAYER_TOP \
+        --replace-fail \
+          'static uint32_t height, normal_height, landscape_height;' \
+          'static uint32_t height, normal_height, landscape_height;
+static uint32_t fixed_width = 0; /* WVKBD_WIDTH, see home/caelestia.nix */' \
+        --replace-fail \
+          '    if ((tmp = getenv("WVKBD_LANDSCAPE_HEIGHT")))
+        landscape_height = atoi(tmp);' \
+          '    if ((tmp = getenv("WVKBD_LANDSCAPE_HEIGHT")))
+        landscape_height = atoi(tmp);
+    if ((tmp = getenv("WVKBD_WIDTH")) && atoi(tmp) > 0)
+        fixed_width = atoi(tmp);' \
+        --replace-fail \
+          '    keyboard.w = available_width;' \
+          '    keyboard.w = (fixed_width && fixed_width < available_width)
+                     ? fixed_width
+                     : available_width;' \
+        --replace-fail \
+          '    zwlr_layer_surface_v1_set_size(layer_surface, 0, height);
+    zwlr_layer_surface_v1_set_anchor(layer_surface, anchor);' \
+          '    if (keyboard.w != available_width) {
+        zwlr_layer_surface_v1_set_size(layer_surface, keyboard.w, height);
+        zwlr_layer_surface_v1_set_anchor(layer_surface,
+                                         ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM);
+    } else {
+        zwlr_layer_surface_v1_set_size(layer_surface, 0, height);
+        zwlr_layer_surface_v1_set_anchor(layer_surface, anchor);
+    }'
     '';
   });
 
@@ -701,15 +825,24 @@ in {
   # reaps exactly those: it runs once the main process is gone, inside this
   # unit's cgroup, and kills only `nmcli monitor` processes found there.
   # Launched apps and gpu-screen-recorder are left alone.
+  #
+  # The on-screen keyboard (services/Osk.qml) is the other shell-owned
+  # helper, and the more visible one: left behind, it would stay on screen
+  # with nothing able to hide it, and the next shell would start a second.
+  # Same reaping, matched on its comm.
   systemd.user.services.caelestia.Service = {
     KillMode = "process";
-    ExecStopPost = "${pkgs.writeShellScript "caelestia-reap-nmcli-monitors" ''
+    ExecStopPost = "${pkgs.writeShellScript "caelestia-reap-helpers" ''
       PATH=${lib.makeBinPath [ pkgs.coreutils ]}
       cg="/sys/fs/cgroup$(cut -d: -f3 /proc/self/cgroup)"
       for pid in $(cat "$cg/cgroup.procs"); do
-        [ "$(cat "/proc/$pid/comm" 2>/dev/null)" = nmcli ] || continue
-        case "$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)" in
-          */nmcli\ monitor\ ) kill "$pid" 2>/dev/null ;;
+        case "$(cat "/proc/$pid/comm" 2>/dev/null)" in
+          wvkbd-mobintl) kill "$pid" 2>/dev/null ;;
+          nmcli)
+            case "$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)" in
+              */nmcli\ monitor\ ) kill "$pid" 2>/dev/null ;;
+            esac
+            ;;
         esac
       done
       exit 0
@@ -951,12 +1084,16 @@ in {
 
       -- SUPER+SHIFT+K → on-screen keyboard toggle (wvkbd; see the let block).
       --
+      -- Goes through the shell's IPC (services/Osk.qml) rather than
+      -- signalling wvkbd directly, so the bar's status icon and this key
+      -- always agree on whether the keyboard is up.
+      --
       -- `hyprctl binds` showed SUPER+SHIFT (modmask 65) free on K, and the
       -- SHIFT plane is where caelestia already parks panel/tool invocations,
       -- same reasoning as SUPER+SHIFT+P above. Keeps the K family together:
       -- SUPER+K showall panels (upstream), SUPER+CTRL+K keyboard backlight,
       -- SUPER+SHIFT+K on-screen keyboard.
-      hl.bind("SUPER + SHIFT + K", hl.dsp.exec_cmd("osk-toggle"))
+      hl.bind("SUPER + SHIFT + K", hl.dsp.exec_cmd("caelestia shell osk toggle"))
 
       -- SUPER+SHIFT+Z → Zen browser, SUPER+SHIFT+V → VS Code.
       --
@@ -1145,8 +1282,7 @@ in {
     pavucontrol # CTRL+ALT+V (vars.audioSettings)
     pwvucontrol # SUPER+B via volume-control-toggle (let block above)
     volumeControlToggle
-    wvkbdBelowShell # SUPER+SHIFT+K via osk-toggle (let block above)
-    oskToggle
+    wvkbdBelowShell # started by the shell (services/Osk.qml); see the let block
     libnotify # notify-send, used by the shell and the F12 test bind
     quickshell # `qs` — see the let block above
     # ── Display arranging.
@@ -1295,6 +1431,29 @@ in {
       shellJson="${config.xdg.configHome}/caelestia/shell.json"
       ${pkgs.jq}/bin/jq --argjson logout '${builtins.toJSON [ "uwsm" "stop" ]}' \
         '.session.commands.logout = $logout' "$shellJson" > "$shellJson.tmp" \
+        && mv "$shellJson.tmp" "$shellJson"
+    '';
+
+  # ── The bar's on-screen keyboard icon, merged into shell.json the same way.
+  #
+  # The shell writes `bar.statusIcons` out in full as soon as anything on the
+  # nexus Status icons page is touched, and from then on the C++ default list
+  # (where the shellSrc patch above adds `osk`) is never consulted again. So
+  # an existing file never grows the new icon on its own. This inserts it
+  # once, directly after bluetooth (or at the end if bluetooth has been
+  # removed), and only when the list exists and has no `osk` entry yet - so
+  # disabling, moving or deleting it in nexus afterwards sticks across
+  # rebuilds. A file without the list keeps using the default.
+  home.activation.caelestiaShellOsk =
+    lib.hm.dag.entryAfter [ "caelestiaShellLogout" ] ''
+      shellJson="${config.xdg.configHome}/caelestia/shell.json"
+      ${pkgs.jq}/bin/jq '
+        if (.bar.statusIcons | type) != "array" or any(.bar.statusIcons[]; .id == "osk") then .
+        else .bar.statusIcons |= (
+          (map(.id) | index("bluetooth")) as $i
+          | if $i == null then . + [{id: "osk", enabled: true}]
+            else .[:$i + 1] + [{id: "osk", enabled: true}] + .[$i + 1:] end)
+        end' "$shellJson" > "$shellJson.tmp" \
         && mv "$shellJson.tmp" "$shellJson"
     '';
 
