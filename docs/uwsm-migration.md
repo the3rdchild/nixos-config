@@ -1,20 +1,26 @@
 # Hyprland → UWSM
 
-**Status: Tier 1, 2.1, 2.3 and most of 2.2 applied. UWSM login and logout
-verified 2026-09-16, including logout from the unit-run shell. The 2.2 units
-(shell, polkit, cliphist) come up once, with no duplicates. The Tier 1 verify
-list and the 2.2 checks were confirmed by hand. The only open items are the
-kill-only bind, app survival across a shell restart, and the nmcli reaper.** This is the assessment and step
-list for moving the Hyprland session from a plain SDDM launch to
-[UWSM](https://github.com/Vladimir-csp/uwsm) (Universal Wayland Session
-Manager). `withUWSM`, the `hyprland-uwsm` default session and the `uwsm/env*`
-files are in the tree, and a login under UWSM came up with the session
-targets and environment right. The first login also turned up two things the
-plan missed. **Logout through `Session.Terminate` hangs SDDM**, and **UWSM
-starts XDG autostart entries**. Both are covered in
-[First login findings](#first-login-findings-2026-09-16). 2.4 and the
-optional parts of 2.2 (keyring, mpris-proxy, geoclue, trash) are still open. When a step lands, update this document instead of leaving it
-describing the old state.
+**Status (2026-09-16): all planned steps are applied.** That covers Tier 1,
+2.1, 2.2 (shell, polkit, cliphist), 2.3 and 2.4. Verified so far:
+- UWSM login and logout, including logout from the unit-run shell
+- the Tier 1 verify list
+- the 2.2 units coming up once, with no duplicates, plus the restart bind and
+  the nmcli reaper
+
+Still open:
+- the 2.4 verify list
+- the kill-only bind
+- launcher apps surviving a shell restart
+- the optional parts of 2.2 (keyring, mpris-proxy, geoclue, trash)
+
+The first login also turned up two things the plan missed. **Logout through
+`Session.Terminate` hangs SDDM**, and **UWSM starts XDG autostart entries**.
+Both are covered in
+[First login findings](#first-login-findings-2026-09-16). This is the
+assessment and step list for moving the Hyprland session from a plain SDDM
+launch to [UWSM](https://github.com/Vladimir-csp/uwsm) (Universal Wayland
+Session Manager). When a step lands, update this document instead of leaving
+it describing the old state.
 
 Related: [`caelestia.md`](caelestia.md) for how the desktop is wired together.
 
@@ -43,7 +49,7 @@ targets (`graphical-session-pre.target`, `graphical-session.target`,
 | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | `graphical-session.target` is `inactive`. Anything bound to it never starts, which is why `kde-color-sync` and `gtk-theme-sync` hang off `default.target`. | The target is reached. Home-manager services with a`graphical-session` default work unchanged.                                              |
 | Autostart is`hl.exec_cmd` in `execs.lua`. A crash stays dead, and output goes nowhere.                                                                           | Autostart can be user units with`Restart=`, ordering, and logs in `journalctl --user`.                                                    |
-| Only the VS Code bind is wrapped in`systemd-run`. Apps from the caelestia launcher run in no scope, so the limits in `home/app-limits.nix` don't reach them.     | `uwsm app --` (or `app2unit`) launches into a scope under `app.slice`, which is what the drop-ins match.                                |
+| Only the VS Code bind is wrapped in `systemd-run`. Apps from the caelestia launcher run in no scope, so the limits in `home/app-limits.nix` don't reach them. | `uwsm app --` launches into a scope under `app-graphical.slice`, whose name the drop-ins can match. The launcher is patched to use it (2.4). |
 | Logout kills the logind session; nothing is stopped in order.                                                                                                        | `uwsm stop` stops the graphical targets in order. (Killing the logind session is *not* a clean alternative here. See the findings below.) |
 | XDG autostart (`/etc/xdg/autostart`, `~/.config/autostart`) is never processed.                                                                                  | `xdg-desktop-autostart.target` runs it. This helps, but it also starts anything that was sitting there unnoticed.                           |
 
@@ -61,7 +67,7 @@ targets (`graphical-session-pre.target`, `graphical-session.target`,
 | Session-mode daemons | `home/qt.nix`, `home/themes.nix` | `kde-color-sync`, `gtk-theme-sync`: `WantedBy = default.target`, kept on purpose so they run in both sessions. The comments say so (2.3). |
 | Logout               | caelestia shell`SessionManager`, `shell.json`                                            | The shell's default`logout` alias is logind `Session.Terminate` over D-Bus, which hangs SDDM (see findings). `home/caelestia.nix` merges `session.commands.logout = ["uwsm", "stop"]` into `shell.json` (activation `caelestiaShellLogout`). No keybind in the dots exits Hyprland. |
 | XDG autostart        | `/run/current-system/sw/etc/xdg/autostart`, `~/.config/autostart`                        | Runs under UWSM only. blueman-applet and warp-taskbar start from here. The geoclue demo agent does too, then exits because`execs.lua` already started one. polkit-gnome and onboard entries were removed (see findings).                                                                      |
-| App launch           | caelestia shell`launcher/services/Apps.qml`                                                | `DesktopEntry.execute()` — started directly, no systemd scope.                                                                                                                                                                                                                               |
+| App launch           | caelestia shell `launcher/services/Apps.qml`, `home/caelestia.nix`, `home/mime.nix` | Launcher, SUPER+SHIFT+V and Dolphin's "Open with VS Code" go through `uwsm app`, into `app-Hyprland-<id>-<hex>.scope` in `app-graphical.slice` (2.4). Other shell execs and plain keybind execs still run unscoped. |
 
 ---
 
@@ -341,8 +347,9 @@ systemctl --user --failed                            # empty
       observed yet: no launcher app was in the cgroup during the test).
 - [ ] CTRL+SUPER+SHIFT+R kills the shell, and `systemctl --user is-active
       caelestia` stays `inactive` until CTRL+SUPER+ALT+R.
-- [ ] After a restart, `pgrep -c -x nmcli` is 1, or 2 with a VPN provider
-      selected (the reaper). For these binds, use the physical SUPER key: the
+- [x] After a restart, `pgrep -c -x nmcli` is 1, or 2 with a VPN provider
+      selected (the reaper). Verified 2026-09-16: 1 after the restart following
+      the switch, and no `left-over process` warnings. For these binds, use the physical SUPER key: the
       CTRL+ESC → SUPER chord (`modules/hyprland-desktop.nix`) releases CTRL,
       so it can't produce CTRL+SUPER combos.
 - [x] Polkit prompt appears; SUPER+V history records text and images
@@ -374,27 +381,80 @@ offered in the greeter as the fallback, and it never reaches
 light following in that session. The comments in both files now describe
 both sessions. Revisit if the fallback session is ever removed.
 
-### 2.4 App launches into scopes (optional)
+### 2.4 App launches into scopes — applied, not verified
 
-Caelestia's launcher calls `DesktopEntry.execute()` directly, so launched apps
-live in the compositor unit's cgroup and outside the `app-*.scope` drop-ins in
-`home/app-limits.nix`. Options:
+Before this step, the caelestia launcher called `DesktopEntry.execute()`, a
+bare detached QProcess. Launched apps lived in the shell's cgroup
+(`caelestia.service` under UWSM, the login session scope otherwise), outside
+the `app-*.scope` drop-ins in `home/app-limits.nix`. Only the SUPER+SHIFT+V
+bind and Dolphin's "Open with VS Code" made a scope, with a hand-rolled
+`systemd-run --user --scope --unit=app-code-…`. The `app-firefox-` and
+`app-microsoft-edge-` drop-ins matched nothing at all.
 
-- Replace the `systemd-run --user --scope …` wrapper on the SUPER+SHIFT+V bind
-  (`home/caelestia.nix`) and in `home/mime.nix` with `uwsm app -- code`.
-  This is shorter, but **the `app-code-` drop-in stops matching**. uwsm names
-  scopes `app-<first XDG_CURRENT_DESKTOP>-<cmd>-<8 hex>.scope` (services use
-  `@<hex>` instead) and puts them in `app-graphical.slice` by default. Here
-  that gives `app-Hyprland-code-1a2b3c4d.scope`, whose prefix drop-ins are
-  `app-Hyprland-code-.scope.d`, `app-Hyprland-.scope.d` and `app-.scope.d`.
-  So the drop-in in `home/app-limits.nix` has to be renamed along with the
-  wrapper. Otherwise the memory cap silently stops applying. Confirm with
-  `systemctl --user show <scope> -p DropInPaths`. The same goes for any app
-  that gets launched through `uwsm app` (Zen's `app-flatpak-…` drop-in
-  included).
-- Patching the launcher in `Apps.qml` to exec `app2unit -- <id>` would cover
-  every app, but it's another shell patch against a pinned release tag. Decide
-  once 2.1–2.3 are done.
+#### What was applied
+
+- **Launcher** (`home/caelestia.nix`, `shellSrc`): `Apps.qml` gets 2
+  `--replace-fail` anchors. Both branches (plain, and `runInTerminal` via
+  caelestia's `wrap_term_launch.sh`) now exec
+  `uwsm app -a <entry.id> -- <entry.command…>`. The command is the one
+  Quickshell already parsed; only process placement changes, and `-a` puts
+  the desktop ID in the unit name. uwsm is referenced by store path, so the
+  launcher doesn't depend on `withUWSM` staying on.
+- **VS Code bind and Dolphin service menu:** `uwsm app -- code` (`… code %F`
+  in `home/mime.nix`).
+- **Drop-ins renamed** (`home/app-limits.nix`): uwsm names scopes
+  `app-<first XDG_CURRENT_DESKTOP>-<id or command>-<8 hex>.scope` in
+  `app-graphical.slice`, and escapes `-` inside the name as `\x2d`:
+
+  | Drop-in dir | Matches |
+  |---|---|
+  | `app-Hyprland-code-.scope.d` | `code` from the bind, the service menu, the launcher |
+  | `app-Hyprland-firefox-.scope.d` | Firefox from the launcher |
+  | `app-Hyprland-microsoft\x2dedge-.scope.d` | Edge via `microsoft-edge.desktop` (literal backslash) |
+  | `app-Hyprland-com.microsoft.Edge-.scope.d` | Edge via `com.microsoft.Edge.desktop`; both entries are installed |
+  | `app-flatpak-app.zen_browser.zen-.scope.d` | Unchanged: `flatpak run` moves Zen into its own `app-flatpak-…` scope, whoever launched it |
+
+- **Tested before switching:**
+  - A dummy `uwsm app -a microsoft-edge -- sleep` became
+    `app-Hyprland-microsoft\x2dedge-<hex>.scope`, and a test drop-in under
+    `$XDG_RUNTIME_DIR/systemd/user/app-Hyprland-microsoft\x2dedge-.scope.d/`
+    showed up in its `DropInPaths` with `MemoryHigh` applied. The test
+    drop-in was removed afterwards.
+  - `uwsm app` has no active-session check, so the plain fallback session
+    gets the same scopes. `app-graphical.slice` is `PartOf`
+    `graphical-session.target`, so under UWSM launched apps are also stopped
+    cleanly at logout.
+  - `uwsm app` added about 100 ms per launch here; `app2unit` about 40 ms.
+    uwsm was kept anyway: it's already installed, and one tool is used
+    everywhere.
+- **Not covered:** other exec paths inside the shell (session commands,
+  recordings list player and explorer, calculator terminal, launcher
+  actions) and plain keybind execs from `keybinds.lua` (terminal, file
+  manager, …). `KillMode=process` on `caelestia` therefore stays.
+
+**Rolling it out.** The shell package changes, so sd-switch restarts
+`caelestia` (apps survive, `KillMode=process`). home-manager does not reload
+the user manager for plain drop-in files, so run
+`systemctl --user daemon-reload` after switching. Otherwise new scopes won't
+see the renamed drop-ins.
+
+**Verify:**
+
+```fish
+# after opening VS Code (SUPER+SHIFT+V) and Firefox or Edge from the launcher
+systemctl --user list-units --plain --no-legend 'app-Hyprland-*'
+for u in (systemctl --user list-units --plain --no-legend 'app-Hyprland-*' | awk '{print $1}')
+    systemctl --user show $u -p Id -p DropInPaths -p MemoryHigh
+end
+```
+
+- [ ] Launcher apps land in `app-Hyprland-<id>-….scope`, not in
+      `caelestia.service` (`systemd-cgls --user-unit caelestia` shows only the
+      shell and its helpers)
+- [ ] VS Code, Firefox and Edge scopes list their `50-memory.conf` in
+      `DropInPaths`
+- [ ] A `Terminal=true` entry (e.g. btop, micro) still opens in foot
+- [ ] Dolphin → "Open with VS Code" opens, in an `app-Hyprland-code-` scope
 
 ---
 
@@ -425,6 +485,8 @@ live in the compositor unit's cgroup and outside the `app-*.scope` drop-ins in
 - [X] 2.2: shell, polkit and cliphist as units; gate `execs.lua`, patch the `keybinds.lua` starts, `KillMode=process`
 - [X] 2.2: switch, re-login; units, duplicates and logout verified
 - [X] 2.2: polkit prompt, SUPER+V, restart bind (after the kill-bind fix)
-- [ ] 2.2: kill-only bind, launcher apps surviving a restart, nmcli reaper
-- [ ] 2.4: `uwsm app --` for the code bind / mime entry; decide on the launcher
+- [X] 2.2: nmcli reaper
+- [ ] 2.2: kill-only bind, launcher apps surviving a restart
+- [X] 2.4: `uwsm app` for the launcher, code bind and Dolphin menu; drop-ins renamed to `app-Hyprland-<id>-`
+- [ ] 2.4: switch, `daemon-reload`, run the 2.4 verify list
 - [ ] Update this doc's status line and [`caelestia.md`](caelestia.md)

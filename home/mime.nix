@@ -35,8 +35,9 @@ in
   };
 
   # Dolphin right-click → "Open with VS Code", for files and folders. KIO
-  # refuses service menus that aren't executable. Launched in its own
-  # app-code-* scope like SUPER+SHIFT+V, so the memory cap still applies.
+  # refuses service menus that aren't executable. Launched through `uwsm app`
+  # like SUPER+SHIFT+V, into its own app-Hyprland-code-<hex>.scope, so the
+  # memory cap in ./app-limits.nix still applies.
   xdg.dataFile."kio/servicemenus/open-with-code.desktop" = {
     executable = true;
     text = ''
@@ -49,7 +50,7 @@ in
       [Desktop Action openWithCode]
       Name=Open with VS Code
       Icon=vscode
-      Exec=sh -c 'systemd-run --user --scope --collect --slice=app.slice --unit=app-code-$(date +%%s%%N) code "$@"' _ %F
+      Exec=${pkgs.uwsm}/bin/uwsm app -- code %F
     '';
   };
 

@@ -35,12 +35,25 @@
   # home-manager writes the file but does not reload the user manager for
   # plain config files.
   #
-  # The same drop-in covers the other apps used to test the web app. Their
-  # scopes are named app-<desktop id>-<suffix> by the launcher (or by the
-  # systemd-run wrapper on the SUPER+SHIFT+V bind in ./caelestia.nix, for
-  # code), so the same trailing-dash prefix matches every instance. An app
-  # started with no scope at all runs straight in the session cgroup and
-  # escapes these limits — that is why the code bind is wrapped.
+  # The same drop-in covers the other apps used to test the web app. The
+  # caelestia launcher (patched in ./caelestia.nix), the SUPER+SHIFT+V bind
+  # and Dolphin's "Open with VS Code" all start apps through `uwsm app`. That
+  # names the scope
+  #   app-<first XDG_CURRENT_DESKTOP>-<desktop id or command>-<8 hex>.scope
+  # e.g. app-Hyprland-firefox-1a2b3c4d.scope. So the same trailing-dash prefix
+  # trick matches every instance, as long as the name carries the "Hyprland-"
+  # part. Two things to keep in mind:
+  # - uwsm escapes `-` inside the ID as \x2d, so microsoft-edge becomes
+  #   app-Hyprland-microsoft\x2dedge-…. The drop-in directory has to spell it
+  #   the same way, literal backslash included.
+  # - Edge has two desktop entries, microsoft-edge and com.microsoft.Edge, and
+  #   the launcher lists both, so both get a drop-in.
+  # Anything started with no scope at all (a bare keybind exec, a terminal
+  # command) runs in its parent's cgroup and escapes these limits.
+  #
+  # Before 2.4 of docs/uwsm-migration.md the launcher created no scopes, so
+  # the firefox and edge drop-ins (then app-firefox-, app-microsoft-edge-)
+  # never matched anything.
   #
   # VS Code gets more headroom than the browsers: throttling it lands on the
   # TypeScript server and extension host, which shows up as typing lag. The
@@ -56,8 +69,9 @@
     dropIn = scope: "systemd/user/${scope}.scope.d/50-memory.conf";
   in {
     ${dropIn "app-flatpak-app.zen_browser.zen-"} = limit "1.5G" "2.5G";
-    ${dropIn "app-firefox-"} = limit "1G" "2G";
-    ${dropIn "app-microsoft-edge-"} = limit "1G" "2G";
-    ${dropIn "app-code-"} = limit "2G" "3.5G";
+    ${dropIn "app-Hyprland-firefox-"} = limit "1G" "2G";
+    ${dropIn "app-Hyprland-microsoft\\x2dedge-"} = limit "1G" "2G";
+    ${dropIn "app-Hyprland-com.microsoft.Edge-"} = limit "1G" "2G";
+    ${dropIn "app-Hyprland-code-"} = limit "2G" "3.5G";
   };
 }

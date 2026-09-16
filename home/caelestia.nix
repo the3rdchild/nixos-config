@@ -365,6 +365,41 @@ import qs.modules.nexus.pages.display' \
     substituteInPlace $out/modules/areapicker/Picker.qml \
       --replace-fail $'Quickshell.execDetached(["swappy", "-f", path]);' \
         $'Quickshell.execDetached(["sh", "-c", "wl-copy --type image/png < " + path]);\n                Quickshell.execDetached(["swappy", "-f", path]);'
+
+    # ── Launcher apps into their own systemd scopes.
+    #
+    # modules/launcher/services/Apps.qml launches with entry.execute(), a bare
+    # detached QProcess. The app ends up in the shell's own cgroup: the
+    # caelestia unit under UWSM, the login session's scope in the plain session.
+    # So the per-app memory drop-ins in ../home/app-limits.nix never matched
+    # anything started from the launcher, and every launched app was tied to
+    # the shell's process lifetime (hence KillMode=process on that unit).
+    #
+    # Both branches now go through `uwsm app -a <desktop id> -- <command>`:
+    # - The command is the one Quickshell already parsed (entry.command, field
+    #   codes stripped). Only the process placement changes, not what runs.
+    # - The scope is app-<first XDG_CURRENT_DESKTOP>-<escaped id>-<hex>.scope,
+    #   e.g. app-Hyprland-firefox-1a2b3c4d.scope. `-` in the ID is escaped to
+    #   \x2d. It goes in app-graphical.slice, PartOf graphical-session.target,
+    #   so under UWSM apps are stopped cleanly at logout.
+    # - `uwsm app` needs no active UWSM session, so the plain fallback session
+    #   gets the same scopes.
+    # - The uwsm store path rather than PATH lookup, so the launcher doesn't
+    #   depend on programs.hyprland.withUWSM staying on.
+    #
+    # KillMode=process on the caelestia unit stays. Other exec paths in the
+    # shell (session commands, recordings list, calculator terminal, launcher
+    # actions) still fork from it.
+    substituteInPlace $out/modules/launcher/services/Apps.qml \
+      --replace-fail \
+        'command: [...GlobalConfig.general.apps.terminal,' \
+        'command: ["${pkgs.uwsm}/bin/uwsm", "app", "-a", entry.id, "--", ...GlobalConfig.general.apps.terminal,' \
+      --replace-fail \
+        '            entry.execute();' \
+        '            Quickshell.execDetached({
+                command: ["${pkgs.uwsm}/bin/uwsm", "app", "-a", entry.id, "--", ...entry.command],
+                workingDirectory: entry.workingDirectory
+            });'
   '';
 
   # Rebuild from the patched tree rather than overriding the flake's package:
@@ -856,10 +891,15 @@ in {
       -- ~/.local/share/flatpak/exports/bin wrapper so the bind does not depend
       -- on that export dir being in the compositor's inherited PATH.
       -- `code` comes from modules/package.nix, on the system profile. It is
-      -- started in its own app-code-* scope so the memory cap in
-      -- home/app-limits.nix applies; a bare exec would land in no scope.
+      -- started through `uwsm app` so it gets its own
+      -- app-Hyprland-code-<hex>.scope and the memory cap in
+      -- home/app-limits.nix applies. A bare exec would land in the
+      -- compositor's cgroup, with no limit. This used to be a hand-rolled
+      -- `systemd-run --user --scope --unit=app-code-…`. uwsm app gives the
+      -- same scope under the naming the launcher now uses too (see the
+      -- Apps.qml patch).
       hl.bind("SUPER + SHIFT + Z", hl.dsp.exec_cmd("flatpak run app.zen_browser.zen"))
-      hl.bind("SUPER + SHIFT + V", hl.dsp.exec_cmd("systemd-run --user --scope --collect --slice=app.slice --unit=app-code-$(date +%s%N) code"))
+      hl.bind("SUPER + SHIFT + V", hl.dsp.exec_cmd("${pkgs.uwsm}/bin/uwsm app -- code"))
 
       -- SUPER+SHIFT+O → Obsidian (modules/package.nix). Free combo too:
       -- nothing in upstream keybinds.lua or `hyprctl binds` uses O. Obsidian
