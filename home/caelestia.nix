@@ -1274,6 +1274,11 @@ in {
       hl.bind("SUPER + SHIFT + Z", hl.dsp.exec_cmd("flatpak run app.zen_browser.zen"))
       hl.bind("SUPER + SHIFT + V", hl.dsp.exec_cmd("${pkgs.uwsm}/bin/uwsm app -- code"))
 
+      -- Disable SUPER+C (upstream vars.kbEditor, keybinds.lua:137 → VS Code).
+      -- VS Code is already on SUPER+SHIFT+V above, and the colour picker stays
+      -- on upstream's SUPER+SHIFT+C. Unbind for the same reason as SUPER+W.
+      hl.unbind("SUPER + C")
+
       -- SUPER+SHIFT+O → Obsidian (modules/package.nix). Free combo too:
       -- nothing in upstream keybinds.lua or `hyprctl binds` uses O. Obsidian
       -- is Electron and focuses its running window when invoked again.

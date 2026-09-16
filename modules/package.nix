@@ -79,6 +79,7 @@
     # follows dark/light through the machinery that is already there, rather
     # than through the GTK stack.
     libreoffice-qt6-still
+    zip # Flutter prerequisite on Linux
   ];
 
   # LibreOffice picks its VCL backend from XDG_CURRENT_DESKTOP, and that is
@@ -91,4 +92,14 @@
   environment.sessionVariables.SAL_USE_VCLPLUGIN = "kf6";
 
   programs.nix-ld.enable = true;
+
+  # Flutter / Android builds. Flutter SDK comes from the VS Code extension and
+  # the Android SDK lives writable in ~/Android/Sdk (Gradle downloads NDK and
+  # build-tools into it); both run through nix-ld above. Only the JDK is from
+  # nixpkgs — this also exports JAVA_HOME. zip is on Flutter's Linux
+  # prerequisite list; curl and unzip are already present.
+  programs.java = {
+    enable = true;
+    package = pkgs.jdk17;
+  };
 }
