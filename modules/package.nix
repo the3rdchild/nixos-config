@@ -111,6 +111,9 @@
   # from a terminal too; ANDROID_HOME points Gradle and `flutter doctor` at
   # the writable SDK.
   environment.sessionVariables.ANDROID_HOME = "$HOME/Android/Sdk";
+  # No Chrome on this machine; Flutter's web target drives any Chromium, and
+  # Edge (above) is one.
+  environment.sessionVariables.CHROME_EXECUTABLE = "${pkgs.microsoft-edge}/bin/microsoft-edge";
   environment.extraInit = ''
     export PATH="$HOME/flutter-sdk/bin:$PATH"
   '';
