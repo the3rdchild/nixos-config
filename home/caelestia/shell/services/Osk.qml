@@ -3,6 +3,8 @@ pragma Singleton
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import qs.services
+import qs.utils
 
 // On-screen keyboard (wvkbd), owned by the shell.
 //
@@ -27,6 +29,69 @@ Singleton {
 
     property bool visible: false
     readonly property bool running: proc.running
+
+    // ── Colours: follow the shell's scheme, light or dark.
+    //
+    // wvkbd only takes colours on its command line, so they are built here
+    // from the current Material palette (Colours.current, never the nexus
+    // preview) and a scheme change restarts a running keyboard, see
+    // restartTimer. Surfaces are translucent - 70 % background, 85 % keys -
+    // and Hyprland blurs what shows through (layer_rule in home/caelestia.nix).
+    // Text stays opaque. Normal keys sit on the highest surface tone, special
+    // keys (Shift, arrows, Enter...) on the secondary container, presses on
+    // the primary container, the same roles the bar's own buttons use.
+    readonly property var p: Colours.current
+    readonly property var colourArgs: [
+        "--bg", hex(p.m3surfaceContainer, 0.70),
+        "--fg", hex(p.m3surfaceContainerHighest, 0.85),
+        "--fg-sp", hex(p.m3secondaryContainer, 0.85),
+        "--press", hex(p.m3primaryContainer, 1),
+        "--press-sp", hex(p.m3primaryContainer, 1),
+        "--swipe", hex(p.m3primary, 0.25),
+        "--swipe-sp", hex(p.m3primary, 0.25),
+        "--text", hex(p.m3onSurface, 1),
+        "--text-sp", hex(p.m3onSecondaryContainer, 1)
+    ]
+
+    // ── Position: where the last drag of the move key (beside Tab) ended.
+    //
+    // Fractions of the free space, "x,y": 0,0 top-left, 1,1 bottom-right,
+    // default bottom-centre. wvkbd prints `wvkbd-position x,y` when a drag
+    // ends (home/caelestia/wvkbd/osk-move.h); it is saved here and handed
+    // back in WVKBD_POSITION, so hide/show, scheme restarts and reboots all
+    // reopen it in the same place. Fractions rather than pixels, so the
+    // other monitor puts it in the same relative spot.
+    property string position: "0.5,1"
+
+    FileView {
+        id: positionFile
+
+        printErrors: false
+        path: `${Paths.state}/osk.json`
+        onLoaded: {
+            try {
+                const data = JSON.parse(text());
+                if (/^[0-9.]+,[0-9.]+$/.test(data.position ?? ""))
+                    root.position = data.position;
+            } catch (e) {}
+        }
+    }
+
+    // True while a scheme-change restart is in flight, and whether the
+    // keyboard was on screen when it began.
+    property bool restarting: false
+    property bool restartVisible: false
+
+    // wvkbd's "rrggbbaa", no leading '#'.
+    function hex(c: color, alpha: real): string {
+        const byte = v => Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16).padStart(2, "0");
+        return byte(c.r) + byte(c.g) + byte(c.b) + byte(alpha);
+    }
+
+    // A scheme switch rewrites every palette role at once; the timer folds
+    // those into one restart. A hidden keyboard is simply stopped: the next
+    // show() starts it with the new colours.
+    onColourArgsChanged: restartTimer.restart()
 
     function show(): void {
         if (proc.running)
@@ -67,12 +132,47 @@ Singleton {
         //
         // --non-exclusive: no exclusive zone, so the keyboard floats over the
         // windows instead of shrinking the tiled area while it is up.
-        command: ["wvkbd-mobintl", "-L", "250", "-H", "250", "--fn", "Rubik 20", "--non-exclusive"]
+        //
+        // WVKBD_RADIUS is ours too: rounds all four corners of the panel by
+        // clipping wvkbd's drawing buffers (see the same override). 23 px
+        // matches Hyprland's window rounding. -R rounds the keys themselves.
+        command: ["wvkbd-mobintl", "-L", "250", "-H", "250", "--fn", "Rubik 20", "-R", "8", "--non-exclusive", ...root.colourArgs]
         environment: ({
-                WVKBD_WIDTH: "1000"
+                WVKBD_WIDTH: "1000",
+                WVKBD_RADIUS: "23",
+                WVKBD_POSITION: root.position
             })
+        stdout: SplitParser {
+            onRead: data => {
+                const m = data.match(/^wvkbd-position ([0-9.]+,[0-9.]+)$/);
+                if (!m)
+                    return;
+                root.position = m[1];
+                positionFile.setText(JSON.stringify({
+                    position: m[1]
+                }) + "\n");
+            }
+        }
         onExited: { // qmllint disable signal-handler-parameters
             root.visible = false;
+            if (root.restarting) {
+                root.restarting = false;
+                if (root.restartVisible)
+                    root.show();
+            }
+        }
+    }
+
+    Timer {
+        id: restartTimer
+
+        interval: 300
+        onTriggered: {
+            if (!proc.running)
+                return;
+            root.restartVisible = root.visible;
+            root.restarting = true;
+            proc.running = false;
         }
     }
 
