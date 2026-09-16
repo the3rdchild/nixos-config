@@ -507,6 +507,24 @@ in {
           blurSize      = 4,
           blurPasses    = 1,
           shadowEnabled = false,
+
+          -- Blur stays ON, and the paragraph above is why: with windowOpacity
+          -- at 1.0 the only translucent surfaces left are the bar, popups and
+          -- foot, so blur is sampled over a few hundred pixels rather than the
+          -- whole screen. It is the cheap half of the tuning, not a casualty
+          -- of it.
+          --
+          -- Pinned explicitly even though upstream already defaults it to true
+          -- (dots hypr/variables.lua:23), because it did not stay true: a
+          -- HyprMod save had written decoration.blur.enabled = false into
+          -- ~/.config/hypr/hyprland-gui.lua, which hypr-user.lua dofiles LAST
+          -- and which therefore won. Qt menus (breezerc MenuOpacity, see
+          -- ./qt.nix) were then simply transparent with nothing behind them.
+          --
+          -- This line does NOT defend against that file — load order still
+          -- beats it. It states the intent so the next person diffing a
+          -- washed-out session has something to compare against.
+          blurEnabled   = true,
       }
     '';
 

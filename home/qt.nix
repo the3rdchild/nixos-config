@@ -226,6 +226,23 @@ in
     colourSync
   ];
 
+  # ── Breeze widget-style tuning.
+  #
+  # breezerc carried MenuOpacity=40 from the plasma6 era: menus drawn at 40%
+  # alpha. Under Plasma that reads as frosted glass because KWin blurs behind
+  # them; here it was plain see-through, and a Dolphin context menu over a
+  # folder grid was unreadable.
+  #
+  # 75 rather than 100 because the compositor blur this pairs with is on again
+  # (blurEnabled in ../home/caelestia.nix) — fully opaque menus would throw the
+  # effect away, and 40 was only ever unreadable for want of the blur.
+  #
+  # Same activation pattern as the keys above: breezerc is written by Breeze's
+  # own settings dialog, so only the one key is asserted, never the file.
+  home.activation.breezeStyle = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+    run ${pkgs.kdePackages.kconfig}/bin/kwriteconfig6 --file breezerc --group Style --key MenuOpacity 75
+  '';
+
   # ── Per-application colour scheme overrides.
   #
   # Every KXmlGui app has a Settings -> Window Color Scheme menu backed by
