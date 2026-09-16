@@ -248,6 +248,91 @@ import qs.modules.nexus.pages.display' \
         Component {
             // Network'
 
+    # ── Mobile hotspot (see modules/hotspot.nix).
+    #
+    # Same mechanism as the Display page above: a new service singleton, a new
+    # sub-page, a row on the Network page, and an entry appended to the
+    # Network StackPage. Appending keeps every existing openSubPage(n) index
+    # valid; the hotspot page is index 7.
+    cp ${./caelestia/shell/services/Hotspot.qml} $out/services/Hotspot.qml
+    cp ${./caelestia/shell/modules/nexus/pages/network/HotspotPage.qml} \
+      $out/modules/nexus/pages/network/HotspotPage.qml
+
+    substituteInPlace $out/modules/nexus/PageCompRegistry.qml --replace-fail \
+      '                Component {
+                    SavedNetworksPage {}
+                }
+            }' \
+      '                Component {
+                    SavedNetworksPage {}
+                }
+                Component {
+                    HotspotPage {}
+                }
+            }'
+
+    # The switch sits under the Wi-Fi block, before VPN — where Windows puts it.
+    substituteInPlace $out/modules/nexus/pages/NetworkPage.qml --replace-fail \
+      '        // ---- VPN -------------------------------------------------------------' \
+      '        // ---- Mobile hotspot --------------------------------------------------
+        ToggleRow {
+            Layout.topMargin: Tokens.spacing.large
+            first: true
+            text: qsTr("Mobile hotspot")
+            subtext: Hotspot.enabled ? qsTr("%1 · %2 connected").arg(Hotspot.ssid).arg(Hotspot.clients) : (Hotspot.error ? Hotspot.error : (Hotspot.starting ? qsTr("Starting…") : qsTr("Share your internet connection")))
+            font: Tokens.font.body.medium
+            horizontalPadding: Tokens.padding.largeIncreased
+            checked: Hotspot.enabled || Hotspot.starting
+            disabled: Hotspot.busy || !Nmcli.wifiEnabled
+            onToggled: Hotspot.setEnabled(checked)
+
+            Timer {
+                running: root.visible
+                repeat: true
+                triggeredOnStart: true
+                interval: 5000
+                onTriggered: Hotspot.refresh()
+            }
+        }
+
+        RowButton {
+            last: true
+            icon: "settings"
+            text: qsTr("Hotspot settings")
+            subtext: Hotspot.ssid ? qsTr("Network name: %1").arg(Hotspot.ssid) : ""
+            trailingIcon: "chevron_right"
+            onClicked: root.nState.openSubPage(7) // Hotspot sub-page
+        }
+
+        // ---- VPN -------------------------------------------------------------'
+
+    # ap0 is the hotspot's virtual AP interface (modules/hotspot.nix). It
+    # reports as a plain wifi device, so without this Nmcli would list it as a
+    # second adapter, could pick it as the "active" interface in
+    # refreshStatus(), and would show the Hotspot profile as the connected
+    # network. Both device-status parsers skip it. --replace-fail so an
+    # upstream rewrite of either loop surfaces here instead of silently
+    # letting ap0 back in.
+    substituteInPlace $out/services/Nmcli.qml \
+      --replace-fail \
+        '            const parts = line.split(":");
+            if (parts.length >= 2) {
+                const deviceType = parts[1];' \
+        '            const parts = line.split(":");
+            if (parts[0] === "ap0")
+                continue; // hotspot AP interface, see modules/hotspot.nix
+            if (parts.length >= 2) {
+                const deviceType = parts[1];' \
+      --replace-fail \
+        '                const parts = line.split(":");
+                if (parts.length >= 4) {
+                    const state = parts[2] || "";' \
+        '                const parts = line.split(":");
+                if (parts[0] === "ap0")
+                    continue; // hotspot AP interface, see modules/hotspot.nix
+                if (parts.length >= 4) {
+                    const state = parts[2] || "";'
+
     # ── Keep rounded corners in game mode.
     #
     # services/GameMode.qml applies one fixed bundle of Hyprland overrides in

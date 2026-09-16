@@ -100,7 +100,7 @@ PageBase {
         InfoRow {
             icon: "lan"
             label: qsTr("Gateway")
-            subtext: qsTr("Clients get 10.42.0.x from NetworkManager")
+            subtext: qsTr("Clients get 10.42.0.x by DHCP")
             value: Hotspot.enabled && Hotspot.address ? Hotspot.address : "—"
         }
 
