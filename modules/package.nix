@@ -64,6 +64,8 @@
     python3
     ethtool
     bun
+    pnpm
+    uv
     dbeaver-bin
     nmap
     picocom
