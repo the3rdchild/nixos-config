@@ -1,12 +1,17 @@
 # Hyprland → UWSM
 
-**Status: Tier 1 and 2.1 applied, login not yet verified.** This is the
-assessment and step list for moving the Hyprland session from a plain SDDM
-launch to [UWSM](https://github.com/Vladimir-csp/uwsm) (Universal Wayland
-Session Manager). `withUWSM`, the `hyprland-uwsm` default session and the
-`uwsm/env*` files are in the tree; the Tier 1 verify list below has not been
-run yet. 2.2–2.4 are still open. When a step lands, update this document
-instead of leaving it describing the old state.
+**Status: Tier 1 and 2.1 applied; UWSM login verified 2026-09-16, logout
+fix pending a test.** This is the assessment and step list for moving the
+Hyprland session from a plain SDDM launch to
+[UWSM](https://github.com/Vladimir-csp/uwsm) (Universal Wayland Session
+Manager). `withUWSM`, the `hyprland-uwsm` default session and the `uwsm/env*`
+files are in the tree, and a login under UWSM came up with the session
+targets and environment right. The first login also turned up two things the
+plan missed. **Logout through `Session.Terminate` hangs SDDM**, and **UWSM
+starts XDG autostart entries**. Both are covered in
+[First login findings](#first-login-findings-2026-09-16). 2.2–2.4 are still
+open. When a step lands, update this document instead of leaving it
+describing the old state.
 
 Related: [`caelestia.md`](caelestia.md) for how the desktop is wired together.
 
@@ -36,7 +41,8 @@ targets (`graphical-session-pre.target`, `graphical-session.target`,
 | `graphical-session.target` is `inactive`. Anything bound to it never starts, which is why `kde-color-sync` and `gtk-theme-sync` hang off `default.target`. | The target is reached. Home-manager services with a `graphical-session` default work unchanged. |
 | Autostart is `hl.exec_cmd` in `execs.lua`. A crash stays dead, and output goes nowhere. | Autostart can be user units with `Restart=`, ordering, and logs in `journalctl --user`. |
 | Only the VS Code bind is wrapped in `systemd-run`. Apps from the caelestia launcher run in no scope, so the limits in `home/app-limits.nix` don't reach them. | `uwsm app --` (or `app2unit`) launches into a scope under `app.slice`, which is what the drop-ins match. |
-| Logout kills the logind session; nothing is stopped in order. | `uwsm stop` / session termination stops the graphical targets cleanly. |
+| Logout kills the logind session; nothing is stopped in order. | `uwsm stop` stops the graphical targets in order. (Killing the logind session is *not* a clean alternative here. See the findings below.) |
+| XDG autostart (`/etc/xdg/autostart`, `~/.config/autostart`) is never processed. | `xdg-desktop-autostart.target` runs it. This helps, but it also starts anything that was sitting there unnoticed. |
 
 ---
 
@@ -50,7 +56,8 @@ targets (`graphical-session-pre.target`, `graphical-session.target`,
 | Autostart | dots `hypr/hyprland/execs.lua` | On `hyprland.start`: gnome-keyring (secrets), polkit-gnome agent, 2× `wl-paste --watch cliphist store`, `trash-empty 30`, `hyprctl setcursor` + 2× `gsettings` cursor, geoclue demo agent, `mpris-proxy`, `caelestia shell -d`. gammastep is patched out. |
 | Shell service | `home/caelestia.nix` | `programs.caelestia.systemd.enable = false` — otherwise it would run a second shell next to the one `execs.lua` starts. |
 | Session-mode daemons | `home/qt.nix`, `home/themes.nix` | `kde-color-sync`, `gtk-theme-sync`: `WantedBy = default.target`, with comments explaining that the graphical target is never reached. |
-| Logout | caelestia shell `SessionManager` | `logout` → logind `Session.Terminate` over D-Bus. It does **not** use `hyprctl dispatch exit`, which UWSM advises against. No keybind in the dots exits Hyprland. |
+| Logout | caelestia shell `SessionManager`, `shell.json` | The shell's default `logout` alias is logind `Session.Terminate` over D-Bus, which hangs SDDM (see findings). `home/caelestia.nix` merges `session.commands.logout = ["uwsm", "stop"]` into `shell.json` (activation `caelestiaShellLogout`). No keybind in the dots exits Hyprland. |
+| XDG autostart | `/run/current-system/sw/etc/xdg/autostart`, `~/.config/autostart` | Runs under UWSM only. blueman-applet and warp-taskbar start from here. The geoclue demo agent does too, then exits because `execs.lua` already started one. polkit-gnome and onboard entries were removed (see findings). |
 | App launch | caelestia shell `launcher/services/Apps.qml` | `DesktopEntry.execute()` — started directly, no systemd scope. |
 
 ---
@@ -110,10 +117,54 @@ Then test the things most likely to break:
 - [ ] Screen sharing / portals (Hyprland portal) in the browser
 - [ ] **Logout from the caelestia session menu returns to SDDM**, and a
       fresh login from there starts cleanly (no leftover `wayland-wm@*`
-      unit). `Session.Terminate` should bring UWSM down, but this path has
-      not been tested yet.
+      unit). The menu now runs `uwsm stop`, which has not been tested yet.
+      Check `jq .session ~/.config/caelestia/shell.json` first, and have
+      nothing unsaved open.
+- [ ] `systemctl --user --failed` is empty after login
 
-**Rollback:** pick "Hyprland" at the greeter, or revert the two lines.
+**Rollback:** pick "Hyprland" at the greeter, or revert the two lines. The
+menu's logout does nothing in that session, because there is no UWSM session
+to stop. No clean way to log out of it has been verified, so leave it with
+the menu's reboot or shutdown. Do **not** use `loginctl terminate-session`.
+
+### First login findings (2026-09-16)
+
+**`loginctl terminate-session` / `Session.Terminate` leaves SDDM hung.**
+This was hit from the plain Hyprland session, while switching to UWSM:
+
+- logind kills every process in the session scope, including `sddm-helper`.
+  SDDM logs `Auth: sddm-helper (… --start …/start-hyprland …) crashed (exit
+  code 1)` and then never starts the greeter again. The screen stays on a
+  bare VT with a blinking cursor and takes no input.
+- `start-hyprland` also dumped core (SIGABRT from `std::thread::join` inside
+  its own signal handler). That is noise next to the SDDM problem.
+- `HandlePowerKey = "ignore"` (`modules/power.nix`) meant the short press did
+  nothing, so the only way out was the EC's hard power cut. That left the
+  ext4 root needing journal recovery, the ESP with its dirty bit set, and
+  `/mnt/doc` (ntfs3) dirty and refused at mount until `chkdsk /f` ran from
+  Windows. `git fsck` on this repo (which lives on `/mnt/doc`) was clean
+  afterwards.
+
+Under UWSM the same call would kill `sddm-helper` the same way, because the
+helper is still in the session scope. That is why the caelestia menu's logout
+is now `uwsm stop`. `modules/power.nix` also sets `kernel.sysrq = 176`: if the
+display hangs again, hold Alt+SysRq and press S, U, B (or O) to reboot or
+power off cleanly. Before that, try CTRL+ALT+F3, log in, and run
+`sudo systemctl restart display-manager`.
+
+**UWSM runs XDG autostart.** Once `graphical-session.target` is reached,
+`xdg-desktop-autostart.target` starts every applicable `.desktop` entry. The
+plain session never did this, so entries that had been sitting there unused
+came to life:
+
+| Entry | Source | What happened | Action |
+|---|---|---|---|
+| `onboard` | `home/onboard.nix` (`~/.config/autostart`) | Started the X11 on-screen keyboard, which wvkbd (SUPER+SHIFT+K) replaced | Module removed |
+| `polkit-gnome-authentication-agent-1` | `polkit_gnome` in system packages | Lost the race to the `execs.lua` agent ("An authentication agent already exists"), left a failed unit | Package dropped from `modules/hyprland-desktop.nix`; `execs.lua` runs it by store path |
+| `blueman` | `services.blueman` | blueman-applet in the tray | Kept |
+| `com.cloudflare.WarpTaskbar` | cloudflare-warp | warp-taskbar in the tray | Kept |
+| `geoclue-demo-agent` | `services.geoclue2` | "Another instance … is running", exits 0 | Kept; harmless, goes away with 2.2 |
+| `xdg-user-dirs` | `xdg-user-dirs` | One-shot update | Kept |
 
 ---
 
@@ -232,7 +283,9 @@ live in the compositor unit's cgroup and outside the `app-*.scope` drop-ins in
 |---|---|---|
 | Env var only in `env.lua` → wrong theming in systemd/D-Bus-started apps | Medium | 2.1; compare `show-environment` with `env` in a terminal. |
 | Double caelestia shell | High *if* 2.2 is half-done | Flip `systemd.enable` and remove the exec in the same commit. |
-| Logout via `Session.Terminate` doesn't stop UWSM cleanly | Low, untested | Tier 1 checklist; if it fails, set the shell's logout command to `uwsm stop`. |
+| Logout via `Session.Terminate` hangs SDDM | **Happened** (plain session, 2026-09-16) | Shell logout is now `uwsm stop`. Never use `loginctl terminate-session` to leave a session. SysRq S-U-B is the way out if the display hangs anyway. |
+| `uwsm stop` from the menu doesn't return to SDDM either | Low, untested | Tier 1 checklist. Test with nothing unsaved; recover with CTRL+ALT+F3 → `sudo systemctl restart display-manager`, or SysRq. |
+| A newly installed package's XDG autostart entry starts unexpectedly | Medium over time | Check `systemctl --user list-units 'app-*@autostart.service'` after adding GUI packages. |
 | Flake bump breaks a new `--replace-fail` | Medium over time | Keep Tier 2 patches minimal; the failure shows up at build time. |
 | SilentSDDM doesn't honour `defaultSession` | Low | Pick the session manually once; the greeter remembers the last one. |
 
@@ -241,7 +294,9 @@ live in the compositor unit's cgroup and outside the `app-*.scope` drop-ins in
 ## Checklist
 
 - [x] Tier 1: `withUWSM` + `defaultSession` in the tree
-- [ ] Tier 1: `nixos-rebuild switch`, log into "Hyprland (uwsm-managed)", run the verify list
+- [x] Tier 1: `nixos-rebuild switch`, log into "Hyprland (uwsm-managed)"; targets, env, autostart checked
+- [x] Tier 1: logout via `uwsm stop`, XDG autostart cleanup, `kernel.sysrq = 176`
+- [ ] Tier 1: test logout from the caelestia menu; run the rest of the verify list
 - [x] 2.1: `uwsm/env` + `uwsm/env-hyprland`
 - [ ] 2.1: after a verified UWSM login, drop the `QT_QPA_PLATFORMTHEME` dots patch
 - [ ] 2.3: retarget or re-comment `kde-color-sync` / `gtk-theme-sync`

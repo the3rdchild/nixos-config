@@ -379,8 +379,8 @@ import qs.modules.nexus.pages.display' \
 
   # ── SUPER+SHIFT+K → on-screen keyboard (wvkbd), show/hide toggle.
   #
-  # wvkbd, not onboard (home/onboard.nix), because onboard is an X11 app that
-  # types through XTEST: under Hyprland its keystrokes only reach XWayland
+  # wvkbd, not onboard, because onboard is an X11 app that types through
+  # XTEST: under Hyprland its keystrokes only reach XWayland
   # clients and vanish in foot, Zen, or a Wayland-native VS Code. wvkbd is a
   # layer-shell surface driving zwp_virtual_keyboard_v1, so it sits above every
   # window, never takes keyboard focus away from the app you are typing into,
@@ -967,6 +967,33 @@ in {
           }
         ];
       }}' '.general.idle = $idle' "$shellJson" > "$shellJson.tmp" \
+        && mv "$shellJson.tmp" "$shellJson"
+    '';
+
+  # ── Logout through UWSM, merged into shell.json the same way.
+  #
+  # The session menu's default logout is the built-in `logout` alias, which is
+  # logind Session.Terminate (SessionManager::logout in the shell's plugin) —
+  # exactly `loginctl terminate-session`. That kills every process in the
+  # session scope, sddm-helper included. SDDM reads the SIGTERM'd helper as a
+  # crash ("Auth: sddm-helper ... crashed (exit code 1)") and never brings the
+  # greeter back: the screen sits on a bare VT with a blinking cursor and no
+  # input (2026-09-16; ended in a forced power-off and a dirty /mnt/doc).
+  #
+  # `uwsm stop` is UWSM's own exit path instead: it stops the compositor unit
+  # and the session targets, uwsm's process under sddm-helper then returns
+  # normally, and SDDM restarts the greeter the way it does after any clean
+  # logout. "uwsm" is not one of the shell's aliases, so SessionManager.exec
+  # falls through to Quickshell.execDetached with this argv.
+  #
+  # Trade-off: in the plain "Hyprland" fallback session there is no UWSM
+  # session to stop, so the menu's logout does nothing there. A no-op beats a
+  # hung display manager.
+  home.activation.caelestiaShellLogout =
+    lib.hm.dag.entryAfter [ "caelestiaShellIdle" ] ''
+      shellJson="${config.xdg.configHome}/caelestia/shell.json"
+      ${pkgs.jq}/bin/jq --argjson logout '${builtins.toJSON [ "uwsm" "stop" ]}' \
+        '.session.commands.logout = $logout' "$shellJson" > "$shellJson.tmp" \
         && mv "$shellJson.tmp" "$shellJson"
     '';
 

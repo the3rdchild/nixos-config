@@ -47,6 +47,10 @@
     # unaffected: that's the Acer EC holding the rail down after ~4s, below
     # the OS entirely. logind's own long-press action is ignored too so it
     # can't race the EC with a soft poweroff mid-hold.
+    #
+    # Which leaves the EC cut as the only way out of a hung graphical session,
+    # and a hard cut leaves the NTFS volumes dirty — ntfs3 then refuses to
+    # mount /mnt/doc until chkdsk runs from Windows. See kernel.sysrq below.
     HandlePowerKey = "ignore";
     HandlePowerKeyLongPress = "ignore";
 
@@ -84,6 +88,20 @@
     # ../home/caelestia.nix) — that path is unaffected by this switch.
     IdleAction = "ignore";
   };
+
+  # ── Magic SysRq: a clean way out when the graphical session hangs.
+  #
+  # With both power-key actions ignored above, the only exit from a frozen
+  # display (no greeter, no input) used to be the EC's ~4s hard cut, which
+  # leaves /mnt/doc and /mnt/shared dirty. On 2026-09-16 that is exactly what
+  # happened, and ntfs3 refused /mnt/doc until chkdsk ran from Windows.
+  #
+  # systemd's default is 16 (sync only). 176 = 16 sync + 32 remount read-only
+  # + 128 reboot/poweroff, so holding Alt+SysRq (PrtSc) and pressing
+  #   S (sync), U (remount ro), B (reboot)   — or O instead of B to power off
+  # flushes and cleanly detaches every filesystem first. Deliberately not 1:
+  # the process-killing and keyboard-raw keys stay off.
+  boot.kernel.sysctl."kernel.sysrq" = 176;
 
 
   # ── Wi-Fi power saving.

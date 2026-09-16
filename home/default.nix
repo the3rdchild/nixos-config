@@ -9,7 +9,6 @@
     ./mime.nix
     ./zen.nix
     ./caelestia.nix
-    ./onboard.nix
     ./themes.nix
     ./qt.nix
     ./vscode.nix
