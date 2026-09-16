@@ -12,6 +12,7 @@
     ./onboard.nix
     ./themes.nix
     ./qt.nix
+    ./vscode.nix
     ./app-limits.nix
   ];
 

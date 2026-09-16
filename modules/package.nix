@@ -64,8 +64,24 @@
     openssl
     mission-center
     firefox
-    libreoffice-still
+    # The qt6 build, not plain libreoffice-still: that one ships only
+    # libvclplug_genlo.so and libvclplug_gtk3lo.so, so LibreOffice rendered as
+    # a GTK3 app and never looked at kdeglobals. This variant adds
+    # libvclplug_kf6lo.so, which reads the same Breeze colour scheme
+    # ../home/qt.nix keeps in step with the session mode — so LibreOffice
+    # follows dark/light through the machinery that is already there, rather
+    # than through the GTK stack.
+    libreoffice-qt6-still
   ];
+
+  # LibreOffice picks its VCL backend from XDG_CURRENT_DESKTOP, and that is
+  # "Hyprland" here — not a name it recognises as KDE, so its own fallback
+  # order lands on gtk3 even with the kf6 plugin present. This forces it.
+  #
+  # The variable is LibreOffice-specific, so session-wide scope costs nothing.
+  # It must stay in step with the package above: point it at kf6 with a build
+  # that lacks the plugin and LibreOffice drops to the bare `gen` backend.
+  environment.sessionVariables.SAL_USE_VCLPLUGIN = "kf6";
 
   programs.nix-ld.enable = true;
 }

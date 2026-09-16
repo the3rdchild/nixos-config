@@ -126,6 +126,75 @@ let
 
   activeTheme = themes.${cfg.active};
 
+  # ── The GTK theme name, corrected per dark/light mode.
+  #
+  # WHY THIS IS NEEDED
+  #   caelestia's apply_gtk (utils/theme.py:316) writes the dconf gtk-theme
+  #   key unconditionally as "adw-gtk3-dark" — the DARK variant, even when the
+  #   line immediately below it is writing prefer-light. It is a genuine
+  #   upstream bug, invisible in the shell (which colours itself from
+  #   scheme.json) and visible only in GTK apps.
+  #
+  #   Two things made it worse here. adw-gtk3 was not installed at all, so
+  #   GTK3 fell back to Adwaita; and ~/.config/gtk-3.0/settings.ini still
+  #   carried plasma6-era values naming two themes that do not exist. The net
+  #   effect was a GTK stack where flipping the mode changed almost nothing —
+  #   LibreOffice in particular ended up recolouring its text and not its
+  #   background.
+  #
+  # WHY dconf AND NOT settings.ini
+  #   On Wayland GTK3 reads gtk-theme-name from the xdg settings portal, and
+  #   the portal serves this dconf key. settings.ini is OUTRANKED — measured
+  #   with gtk-query-settings, which reported adw-gtk3-dark while settings.ini
+  #   was asking for Flat-Remix-GTK-Blue-Dark. So the fix has to land on dconf.
+  #
+  # WHY A WATCHER AND NOT A PATCH
+  #   Patching the CLI derivation was tried first and silently did nothing:
+  #   the postPatch landed in the .drv, the anchor matched when run by hand,
+  #   and the built output was still unmodified. A patch that can no-op
+  #   without failing the build is worse than no patch.
+  #
+  # WHY NO prefer-dark HANDLING
+  #   adw-gtk3 and adw-gtk3-dark are separate theme trees, each with its own
+  #   gtk.css. Once the name is right the mode is already decided, so
+  #   gtk-application-prefer-dark-theme only has to be false and stay false —
+  #   asserted once in the activation below. Both trees also ship a
+  #   gtk-dark.css, which is exactly why leaving it at the inherited `true`
+  #   would have kept the light variant dark.
+  gtkThemeSync = pkgs.writeShellScriptBin "gtk-theme-sync" ''
+    set -euo pipefail
+    export PATH="${pkgs.dconf}/bin:$PATH"
+
+    iface=/org/gnome/desktop/interface
+
+    apply() {
+      case "$(dconf read $iface/color-scheme)" in
+        *dark*) want="'adw-gtk3-dark'" ;;
+        *)      want="'adw-gtk3'" ;;
+      esac
+      # Guarded so writing the key cannot wake this loop into a cycle.
+      if [ "$(dconf read $iface/gtk-theme)" != "$want" ]; then
+        dconf write $iface/gtk-theme "$want"
+      fi
+    }
+
+    apply
+
+    # `dconf watch` prints the changed key's full path, then its value. Only
+    # color-scheme matters; caelestia writes it immediately AFTER gtk-theme
+    # (theme.py:316 then 317), so by the time this fires the wrong value is
+    # already in place and this overwrites it.
+    dconf watch $iface/ | while read -r line; do
+      if [ "$line" = "$iface/color-scheme" ]; then
+        apply
+      fi
+    done
+
+    # Only reached if `dconf watch` died; make that a failure so systemd
+    # restarts instead of leaving the mode unwatched.
+    exit 1
+  '';
+
   # Flatten every package across every theme so all are installed and a
   # `theme-switch` is instant without a rebuild.
   allPackages = lib.flatten (lib.mapAttrsToList (_: t: t.packages) themes);
@@ -207,7 +276,16 @@ in
 
   config = {
     # 1. Install ALL theme packages so any switch is instant.
-    home.packages = allPackages ++ [ themeSwitch ];
+    home.packages = allPackages ++ [
+      themeSwitch
+      gtkThemeSync
+
+      # Not one of the registry themes above and deliberately not in it: this
+      # is the theme caelestia names on every scheme change, so it has to
+      # exist no matter which entry `themes.active` points at. Ships both the
+      # adw-gtk3 and adw-gtk3-dark trees.
+      pkgs.adw-gtk3
+    ];
 
     # 2. Set the active theme at activation (one-time, per rebuild). The dots'
     #    own initial-boot.sh / DarkLight.sh run later at login and will pick
@@ -220,7 +298,50 @@ in
       gsettings set org.gnome.desktop.interface cursor-theme  "${activeTheme.cursor}" 2>/dev/null || true
     '';
 
-    # 3. Provide a stable cache dir for cursor rendering (some apps need it).
+    # 3. Keep the GTK theme name in step with the mode (see gtkThemeSync).
+    #    default.target, not graphical-session.target — this session never
+    #    reaches the latter, same as the Qt watcher in ./qt.nix.
+    systemd.user.services.gtk-theme-sync = {
+      Unit = {
+        Description = "Point dconf's gtk-theme at the adw-gtk3 variant matching the session mode";
+        After = [ "dconf.service" ];
+      };
+      Service = {
+        ExecStart = "${gtkThemeSync}/bin/gtk-theme-sync";
+        Restart = "on-failure";
+        RestartSec = 5;
+      };
+      Install.WantedBy = [ "default.target" ];
+    };
+
+    # 4. Prune ~/.config/gtk-3.0/settings.ini.
+    #
+    #    Every key deleted here names something that is not installed
+    #    (Flat-Remix-GTK-Blue-Dark, breeze-dark, breeze_cursors,
+    #    colorreload-gtk-module) and is already outranked by the portal, so
+    #    removing them changes nothing at runtime — it stops the file from
+    #    lying about what the session uses. prefer-dark is the one key the
+    #    portal does NOT serve, so it is the one that still had teeth: left at
+    #    the inherited `true` it pulls gtk-dark.css out of whichever adw-gtk3
+    #    tree is selected and undoes the switcher above.
+    #
+    #    Asserted key by key rather than owning the file, for the reason in
+    #    the header — except the reason has changed: the JaKooLit dots that
+    #    used to rewrite it are gone with the move to caelestia, and nothing
+    #    writes it now. It is kept mutable because GTK may yet want to.
+    home.activation.gtk3Settings = lib.hm.dag.entryAfter [ "writeBoundary" ] (
+      let
+        kwriteconfig = "${pkgs.kdePackages.kconfig}/bin/kwriteconfig6";
+        ini = "${config.xdg.configHome}/gtk-3.0/settings.ini";
+        stale = [ "gtk-theme-name" "gtk-icon-theme-name" "gtk-cursor-theme-name" "gtk-modules" ];
+      in
+      lib.concatStringsSep "\n" (
+        [ ''run ${kwriteconfig} --file ${ini} --group Settings --key gtk-application-prefer-dark-theme false'' ]
+        ++ map (key: ''run ${kwriteconfig} --file ${ini} --group Settings --key ${key} --delete ""'') stale
+      )
+    );
+
+    # 5. Provide a stable cache dir for cursor rendering (some apps need it).
     xdg.configFile."gtk-3.0/.keep".text = "";   # ensure dir exists
   };
 }
