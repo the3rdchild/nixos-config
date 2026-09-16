@@ -11,6 +11,7 @@
     ./caelestia.nix
     ./onboard.nix
     ./themes.nix
+    ./qt.nix
     ./app-limits.nix
   ];
 

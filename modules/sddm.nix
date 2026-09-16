@@ -27,13 +27,13 @@
     # for the flake to see it at all.
     #
     # The attribute name is only a label; the file keeps its basename.
-    backgrounds.kokomi = ../assets/sddm/kokomi.jpg;
+    backgrounds.chernobyl = ../assets/sddm/chernobyl.png;
 
     # Overrides on top of the preset. Keys map to [sections] of the conf file;
     # full list: https://github.com/uiriansan/SilentSDDM/wiki/Options
     settings = {
-      "LockScreen".background = "kokomi.jpg";
-      "LoginScreen".background = "kokomi.jpg";
+      "LockScreen".background = "chernobyl.png";
+      "LoginScreen".background = "chernobyl.png";
     };
   };
 

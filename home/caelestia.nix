@@ -27,10 +27,14 @@
         '/usr/lib/geoclue-2.0/demos/agent' \
         '${pkgs.geoclue2-with-demo-agent}/libexec/geoclue-2.0/demos/agent'
 
-    # QT_QPA_PLATFORMTHEME=qtengine — qtengine is AUR-only. qt6ct is the
-    # same idea (Qt platform theme reading a config file) and is packaged.
+    # QT_QPA_PLATFORMTHEME=qtengine — qtengine is AUR-only, and the rest of
+    # caelestia's Qt support writes to ~/.config/qtengine/ where nothing on
+    # NixOS reads it. `kde` is plasma-integration, which reads kdeglobals
+    # instead and re-themes running apps on a D-Bus signal. See ../home/qt.nix
+    # for the daemon that drives it; this line is the half that has to live in
+    # the dots, because Hyprland's own env block is what the session inherits.
     substituteInPlace $out/hypr/hyprland/env.lua \
-      --replace-fail '"QT_QPA_PLATFORMTHEME", "qtengine"' '"QT_QPA_PLATFORMTHEME", "qt6ct"'
+      --replace-fail '"QT_QPA_PLATFORMTHEME", "qtengine"' '"QT_QPA_PLATFORMTHEME", "kde"'
 
     # gestures.lua binds a 4-finger swipe-down to `systemctl
     # suspend-then-hibernate` (vars.sleepGestureCmd). Far too easy to trigger
@@ -829,9 +833,11 @@ in {
     wireplumber # wpctl, volume keybinds
     glib # gsettings, used by execs.lua for cursor
 
-    # Qt theming — replaces the AUR-only qtengine referenced by env.lua
-    qt6Packages.qt6ct
-    darkly
+    # Qt theming lives in ../home/qt.nix — plasma-integration + Breeze,
+    # following the dark/light mode. qt6ct and darkly used to be here as the
+    # stand-in for env.lua's qtengine; both are gone with it. Nothing ever
+    # wrote qt6ct.conf, so it was pinned to a hand-set July 2026 palette, and
+    # darkly was a style that config never actually selected.
 
     # Fonts the shell's QML expects. The shell derivation builds its own
     # fontconfig for its process, but nothing else on the system sees it.

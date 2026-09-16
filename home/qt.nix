@@ -58,8 +58,16 @@ let
     import sys
 
     SCHEMES = "${breeze}/share/color-schemes"
-    GSETTINGS = "${pkgs.glib.bin}/bin/gsettings"
     DBUS_SEND = "${pkgs.dbus}/bin/dbus-send"
+
+    # dconf, not gsettings. `gsettings` from glib.bin only reaches the real
+    # database when GIO_EXTRA_MODULES points at dconf's GIO module; without it
+    # every read silently returns the SCHEMA DEFAULT — 'default' for
+    # color-scheme and 'Adwaita' for icon-theme — which looks like a working
+    # read and is always light. dconf talks to the same database caelestia
+    # writes with (`dconf write`, theme.py:315-319) and needs no GIO plumbing.
+    DCONF = "${pkgs.dconf}/bin/dconf"
+    IFACE = "/org/gnome/desktop/interface/"
 
     CONFIG = os.path.join(
         os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
@@ -94,14 +102,16 @@ let
         return parser
 
 
-    def gsetting(key, fallback):
+    def setting(key, fallback):
         try:
             result = subprocess.run(
-                [GSETTINGS, "get", "org.gnome.desktop.interface", key],
+                [DCONF, "read", IFACE + key],
                 capture_output=True, text=True, timeout=10, check=True,
             )
         except (OSError, subprocess.SubprocessError):
             return fallback
+        # Empty output means the key was never written; dconf does not know
+        # the schema default, so the caller's fallback stands in.
         return result.stdout.strip().strip("'\"") or fallback
 
 
@@ -122,18 +132,16 @@ let
 
 
     def apply():
-        dark = "dark" in gsetting("color-scheme", "prefer-dark")
+        dark = "dark" in setting("color-scheme", "prefer-dark")
         scheme = "BreezeDark" if dark else "BreezeLight"
-        icons = gsetting("icon-theme", "Papirus-Dark" if dark else "Papirus-Light")
+        icons = setting("icon-theme", "Papirus-Dark" if dark else "Papirus-Light")
 
         current = ini()
         current.read(CONFIG, encoding="utf-8")
 
-        already = (
-            current.get("General", "ColorScheme", fallback=None) == scheme
-            and current.get("Icons", "Theme", fallback=None) == icons
-        )
-        if already:
+        same_colours = current.get("General", "ColorScheme", fallback=None) == scheme
+        same_icons = current.get("Icons", "Theme", fallback=None) == icons
+        if same_colours and same_icons:
             return
 
         for section in list(current.sections()):
@@ -179,16 +187,18 @@ let
         if "--watch" not in sys.argv[1:]:
             return
 
-        # `gsettings monitor <schema>` prints "<key>: <value>" per change. dconf
-        # is what caelestia writes, and dconf's change notification is what this
-        # reads back — no polling.
+        # `dconf watch <dir>` prints the changed key's full path, then its new
+        # value on the next line, then a blank line. Only the path line is of
+        # interest — apply() re-reads everything anyway. Event-driven, no polling.
         monitor = subprocess.Popen(
-            [GSETTINGS, "monitor", "org.gnome.desktop.interface"],
+            [DCONF, "watch", IFACE],
             stdout=subprocess.PIPE, text=True,
         )
         for line in monitor.stdout:
-            if line.split(":", 1)[0] in ("color-scheme", "icon-theme"):
-                apply()
+            key = line.strip()
+            if key.startswith(IFACE):
+                if key[len(IFACE):] in ("color-scheme", "icon-theme"):
+                    apply()
 
 
     main()
@@ -215,6 +225,84 @@ in
 
     colourSync
   ];
+
+  # ── Per-application colour scheme overrides.
+  #
+  # Every KXmlGui app has a Settings -> Window Color Scheme menu backed by
+  # KColorSchemeManager, and picking anything but "Default" writes
+  # [UiSettings] ColorScheme into that app's own rc file. It is not a
+  # preference that layers on top of the system one — it REPLACES it, and
+  # plasma-integration bails out of the global palette update entirely when it
+  # sees one (khintssettings.cpp:244, "Don't change the palette if the
+  # application has a custom one set").
+  #
+  # The failure is nastier than plain "dark/light does nothing": the window
+  # palette stays pinned, but widgets that construct a KColorScheme at paint
+  # time keep reading kdeglobals, so a dark system + a light override renders
+  # white text on a white background. Dolphin shipped into exactly that state.
+  #
+  # Empty means "follow the system", which is what the Default menu entry
+  # writes. Asserted on every rebuild because these files are app-owned and a
+  # stray click is silent. If a per-app scheme is ever genuinely wanted, this
+  # is the block to drop.
+  home.activation.kdeAppColourSchemes =
+    let
+      kwriteconfig = "${pkgs.kdePackages.kconfig}/bin/kwriteconfig6";
+      # Only apps this config actually installs and that carry the menu.
+      apps = [ "dolphinrc" ];
+    in
+    lib.hm.dag.entryAfter [ "writeBoundary" ] (
+      lib.concatMapStringsSep "\n"
+        (rc: ''run ${kwriteconfig} --file ${rc} --group UiSettings --key ColorScheme ""'')
+        apps
+    );
+
+  # ── Fonts.
+  #
+  # Not part of the dark/light flip — set once, and the daemon above preserves
+  # them because it only ever replaces the colour groups.
+  #
+  # qt6ct used to pin the UI to 14pt. Dropping it sent Qt back to the KDE
+  # default of 10pt, which is a visible shrink across every Qt app, so 14pt is
+  # carried over here rather than silently lost. The other sizes are the Plasma
+  # defaults scaled by the same 1.4 (fixed 9->12, smallestReadable 8->11).
+  #
+  # The family is NOT what qt6ct named: it asked for "Fira Code Medium", which
+  # does not exist on this system — nerd-fonts.fira-code installs "FiraCode
+  # Nerd Font" — so fontconfig was quietly resolving it to Noto Sans the whole
+  # time. Noto Sans is also what GTK uses (dconf font-name), so naming it
+  # outright makes the two sides agree instead of agreeing by accident.
+  #
+  # The 17-field values are QFont::toString form; KConfig parses nothing else
+  # reliably for these keys.
+  home.activation.kdeFonts = lib.hm.dag.entryAfter [ "writeBoundary" ] (
+    let
+      kwriteconfig = "${pkgs.kdePackages.kconfig}/bin/kwriteconfig6";
+      qfont = family: size: "${family},${toString size},-1,5,400,0,0,0,0,0,0,0,0,0,0,1,Regular";
+      fonts = {
+        font = qfont "Noto Sans" 14;
+        menuFont = qfont "Noto Sans" 14;
+        toolBarFont = qfont "Noto Sans" 14;
+        smallestReadableFont = qfont "Noto Sans" 11;
+        fixed = qfont "JetBrainsMono Nerd Font" 12;
+      };
+    in
+    lib.concatStringsSep "\n" (
+      lib.mapAttrsToList
+        (key: value: ''run ${kwriteconfig} --file kdeglobals --group General --key ${key} "${value}"'')
+        fonts
+      ++ [
+        # Fonts reload on their own signal, not the palette one the daemon
+        # sends: KFontSettingsData listens for refreshFonts on
+        # /KDEPlatformTheme (kfontsettingsdata.cpp:116-122), while
+        # KHintsSettings listens for notifyChange on /KGlobalSettings. Without
+        # this a rebuild leaves every running Qt app on the old size until it
+        # is restarted. `|| true` because there is no session bus during a
+        # build-time or console activation.
+        ''run ${pkgs.dbus}/bin/dbus-send --session --type=signal /KDEPlatformTheme org.kde.KDEPlatformTheme.refreshFonts || true''
+      ]
+    )
+  );
 
   # ── The daemon.
   #
