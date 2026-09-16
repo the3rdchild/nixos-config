@@ -1,8 +1,9 @@
 # Hyprland → UWSM
 
 **Status: Tier 1, 2.1, 2.3 and most of 2.2 applied. UWSM login and logout
-verified 2026-09-16. The 2.2 units (shell, polkit, cliphist) are not yet
-verified.** The rest of the Tier 1 verify list (polkit, clipboard, theming,
+verified 2026-09-16, including logout from the unit-run shell. The 2.2 units
+(shell, polkit, cliphist) come up once, with no duplicates. Their interactive
+checks are still open.** The rest of the Tier 1 verify list (polkit, clipboard, theming,
 cursor, screen sharing) is still unchecked. This is the assessment and step
 list for moving the Hyprland session from a plain SDDM launch to
 [UWSM](https://github.com/Vladimir-csp/uwsm) (Universal Wayland Session
@@ -11,8 +12,8 @@ files are in the tree, and a login under UWSM came up with the session
 targets and environment right. The first login also turned up two things the
 plan missed. **Logout through `Session.Terminate` hangs SDDM**, and **UWSM
 starts XDG autostart entries**. Both are covered in
-[First login findings](#first-login-findings-2026-09-16). 2.2–2.4 are still
-open. When a step lands, update this document instead of leaving it
+[First login findings](#first-login-findings-2026-09-16). 2.4 and the
+optional parts of 2.2 (keyring, mpris-proxy, geoclue, trash) are still open. When a step lands, update this document instead of leaving it
 describing the old state.
 
 Related: [`caelestia.md`](caelestia.md) for how the desktop is wired together.
@@ -222,7 +223,7 @@ Now in `home/caelestia.nix`, next to `caelestia/hypr-vars.lua`:
 
 Check with `systemctl --user show-environment` after login.
 
-### 2.2 Autostart → systemd user units — shell, polkit, cliphist applied, not verified
+### 2.2 Autostart → systemd user units — shell, polkit, cliphist applied, units verified
 
 Each `execs.lua` entry, and the unit that could replace it:
 
@@ -291,6 +292,9 @@ The rest of `execs.lua` is untouched. Everything is in `home/caelestia.nix`.
 `nixos-rebuild switch` starts the four units immediately, next to the
 `execs.lua` copies that are already running (two shells, a failing duplicate
 polkit agent). Log out and back in from the menu right after switching.
+On 2026-09-16 this went as expected. `polkit-gnome.service` failed to
+register against the `execs.lua` agent five times, hit `start-limit-hit`,
+and came up normally after the re-login.
 
 **Verify** (after the fresh login):
 
@@ -302,14 +306,22 @@ systemctl --user show caelestia -p KillMode          # KillMode=process
 systemctl --user --failed                            # empty
 ```
 
-- [ ] One shell; bar, launcher, notifications work
+- [x] Units active, one shell (`qs list`), the shell's `MainPID` in
+      `caelestia.service`'s cgroup, one `wl-paste` per unit and one polkit agent
+      (all from units, none from `execs.lua`), `KillMode=process`, no failed
+      units. Verified 2026-09-16.
+- [ ] Bar, launcher, notifications work
 - [ ] CTRL+SUPER+ALT+R restarts the shell and apps opened from the launcher
       stay open. CTRL+SUPER+SHIFT+R kills it, and the unit stays inactive.
 - [ ] Polkit prompt appears; SUPER+V history records text and images
-- [ ] Logout from the menu still returns to SDDM. `uwsm stop` is now forked
-      from the unit-run shell, so it sits in `caelestia.service`'s cgroup
-      while that unit is being stopped. `KillMode=process` should leave it
-      running, but that has only been reasoned through, not tested.
+- [x] Logout from the menu still returns to SDDM. `uwsm stop` is forked from
+      the unit-run shell, so it sits in `caelestia.service`'s cgroup while
+      that unit is being stopped. Verified 2026-09-16: systemd logged
+      `caelestia.service: Unit process … (python3.14) remains running after
+      unit stopped` for it (the `uwsm stop` process, kept alive by
+      `KillMode=process`), uwsm finished with `Sent stop job`, and SDDM logged
+      `sddm-helper exited successfully`. With the default `control-group`
+      that process would have been killed mid-logout.
 - [ ] Plain "Hyprland" session still gets the shell, polkit and clipboard
       history from `execs.lua` (optional; leave it via the menu's reboot)
 
@@ -379,6 +391,7 @@ live in the compositor unit's cgroup and outside the `app-*.scope` drop-ins in
 - [ ] 2.1: after a verified UWSM login, drop the `QT_QPA_PLATFORMTHEME` dots patch
 - [X] 2.3: re-comment `kde-color-sync` / `gtk-theme-sync` (kept on `default.target`)
 - [X] 2.2: shell, polkit and cliphist as units; gate `execs.lua`, patch the `keybinds.lua` starts, `KillMode=process`
-- [ ] 2.2: switch, re-login, run the 2.2 verify list
+- [X] 2.2: switch, re-login; units, duplicates and logout verified
+- [ ] 2.2: interactive checks (restart bind keeps apps, polkit prompt, SUPER+V)
 - [ ] 2.4: `uwsm app --` for the code bind / mime entry; decide on the launcher
 - [ ] Update this doc's status line and [`caelestia.md`](caelestia.md)
