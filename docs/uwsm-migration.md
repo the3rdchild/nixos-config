@@ -2,9 +2,9 @@
 
 **Status: Tier 1, 2.1, 2.3 and most of 2.2 applied. UWSM login and logout
 verified 2026-09-16, including logout from the unit-run shell. The 2.2 units
-(shell, polkit, cliphist) come up once, with no duplicates. Their interactive
-checks are still open.** The rest of the Tier 1 verify list (polkit, clipboard, theming,
-cursor, screen sharing) is still unchecked. This is the assessment and step
+(shell, polkit, cliphist) come up once, with no duplicates. The Tier 1 verify
+list and the 2.2 checks were confirmed by hand. The only open items are the
+kill-only bind, app survival across a shell restart, and the nmcli reaper.** This is the assessment and step
 list for moving the Hyprland session from a plain SDDM launch to
 [UWSM](https://github.com/Vladimir-csp/uwsm) (Universal Wayland Session
 Manager). `withUWSM`, the `hyprland-uwsm` default session and the `uwsm/env*`
@@ -111,13 +111,13 @@ systemctl --user show-environment | grep -E 'WAYLAND_DISPLAY|XDG_CURRENT_DESKTOP
 
 Then test the things most likely to break:
 
-- [ ] SilentSDDM lists the new session and picks it as the default
-- [ ] Caelestia shell up; bar, launcher, notifications
-- [ ] Polkit prompt appears (e.g. mount a disk)
-- [ ] Clipboard history (SUPER+V) records text and images
-- [ ] Qt apps follow dark/light (`kde` platform theme); GTK too
-- [ ] Cursor theme/size correct in both Wayland and XWayland apps
-- [ ] Screen sharing / portals (Hyprland portal) in the browser
+- [x] SilentSDDM lists the new session and picks it as the default
+- [x] Caelestia shell up; bar, launcher, notifications
+- [x] Polkit prompt appears (e.g. mount a disk)
+- [x] Clipboard history (SUPER+V) records text and images
+- [x] Qt apps follow dark/light (`kde` platform theme); GTK too
+- [x] Cursor theme/size correct in both Wayland and XWayland apps
+- [x] Screen sharing / portals (Hyprland portal) in the browser
 - [x] **Logout from the caelestia session menu returns to SDDM**, and a
   fresh login from there starts cleanly (no leftover `wayland-wm@*`
   unit). Verified 2026-09-16 with the menu running `uwsm stop`: the units
@@ -277,6 +277,16 @@ The rest of `execs.lua` is untouched. Everything is in `home/caelestia.nix`.
   unit change) would kill all of them. Under `execs.lua` they lived in the
   compositor's cgroup, where a shell restart didn't touch them. 2.4
   (launching apps into their own scopes) would make this unnecessary.
+  The cost: the shell's own `nmcli monitor` helpers (`services/Nmcli.qml`, and
+  `services/VPN.qml` while a VPN provider is selected) survive it too.
+  quickshell exits on SIGTERM without stopping its `Process` children, so
+  every restart and every logout left one orphan in the cgroup. Three had
+  piled up by the time this was noticed, and each lives until a
+  NetworkManager event makes its next write hit a closed pipe.
+  `ExecStopPost=caelestia-reap-nmcli-monitors` runs after the main process is
+  gone and kills only `nmcli monitor` processes left in the unit's cgroup.
+  Tested in a transient scope: the fake `nmcli monitor` was killed, and the
+  `nmcli dev wifi` and `sleep` decoys survived.
 - **cliphist parity:** `extraOptions = [ ]`. The module's default
   `-max-dedupe-search 10 -max-items 500` would otherwise differ from the
   `execs.lua` lines, which use cliphist's built-in 100 / 750, and both
@@ -320,15 +330,22 @@ systemctl --user --failed                            # empty
       `caelestia.service`'s cgroup, one `wl-paste` per unit and one polkit agent
       (all from units, none from `execs.lua`), `KillMode=process`, no failed
       units. Verified 2026-09-16.
-- [ ] Bar, launcher, notifications work
-- [ ] CTRL+SUPER+ALT+R restarts the shell and apps opened from the launcher
-      stay open. CTRL+SUPER+SHIFT+R kills it, and the unit stays inactive.
-      The first test failed: the binds did nothing, because of the broken
-      `qs -c caelestia kill` above. Retest after the `caelestia-shell-kill`
-      fix. Use the physical SUPER key: the CTRL+ESC → SUPER chord
-      (`modules/hyprland-desktop.nix`) releases CTRL, so it can't produce
-      CTRL+SUPER combos.
-- [ ] Polkit prompt appears; SUPER+V history records text and images
+- [x] Bar, launcher, notifications work
+- [x] CTRL+SUPER+ALT+R restarts the shell. The first test failed: the bind
+      did nothing, because of the broken `qs -c caelestia kill` above. After
+      the `caelestia-shell-kill` fix it works in a single press (it is
+      kill-then-start, and does not need CTRL+SUPER+SHIFT+R first). The
+      journal showed `Stopping` → `Stopped` → `Started` about 110 ms apart,
+      twice, 2026-09-16.
+- [ ] Apps opened from the launcher stay open across that restart (not
+      observed yet: no launcher app was in the cgroup during the test).
+- [ ] CTRL+SUPER+SHIFT+R kills the shell, and `systemctl --user is-active
+      caelestia` stays `inactive` until CTRL+SUPER+ALT+R.
+- [ ] After a restart, `pgrep -c -x nmcli` is 1, or 2 with a VPN provider
+      selected (the reaper). For these binds, use the physical SUPER key: the
+      CTRL+ESC → SUPER chord (`modules/hyprland-desktop.nix`) releases CTRL,
+      so it can't produce CTRL+SUPER combos.
+- [x] Polkit prompt appears; SUPER+V history records text and images
 - [x] Logout from the menu still returns to SDDM. `uwsm stop` is forked from
       the unit-run shell, so it sits in `caelestia.service`'s cgroup while
       that unit is being stopped. Verified 2026-09-16: systemd logged
@@ -401,12 +418,13 @@ live in the compositor unit's cgroup and outside the `app-*.scope` drop-ins in
 - [X] Tier 1: `nixos-rebuild switch`, log into "Hyprland (uwsm-managed)"; targets, env, autostart checked
 - [X] Tier 1: logout via `uwsm stop`, XDG autostart cleanup, `kernel.sysrq = 176`
 - [X] Tier 1: logout from the caelestia menu back to SDDM, and log in again
-- [ ] Tier 1: rest of the verify list (polkit, clipboard, Qt/GTK theme, cursor, screen sharing)
+- [X] Tier 1: rest of the verify list (polkit, clipboard, Qt/GTK theme, cursor, screen sharing)
 - [X] 2.1: `uwsm/env` + `uwsm/env-hyprland`
 - [ ] 2.1: after a verified UWSM login, drop the `QT_QPA_PLATFORMTHEME` dots patch
 - [X] 2.3: re-comment `kde-color-sync` / `gtk-theme-sync` (kept on `default.target`)
 - [X] 2.2: shell, polkit and cliphist as units; gate `execs.lua`, patch the `keybinds.lua` starts, `KillMode=process`
 - [X] 2.2: switch, re-login; units, duplicates and logout verified
-- [ ] 2.2: interactive checks (restart bind keeps apps, polkit prompt, SUPER+V)
+- [X] 2.2: polkit prompt, SUPER+V, restart bind (after the kill-bind fix)
+- [ ] 2.2: kill-only bind, launcher apps surviving a restart, nmcli reaper
 - [ ] 2.4: `uwsm app --` for the code bind / mime entry; decide on the launcher
 - [ ] Update this doc's status line and [`caelestia.md`](caelestia.md)

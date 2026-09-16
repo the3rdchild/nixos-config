@@ -99,7 +99,8 @@ surfaces. The dots are patched so they can't both fire. `uwsm/env-hyprland`
 exports `CAELESTIA_UWSM=1`, and the `execs.lua` lines and both
 shell-starting keybinds go through `unless-uwsm` / `caelestia-shell-up`, which
 check it. The unit also has `KillMode=process`, so a shell restart doesn't take
-the apps it launched down with it. Details and rationale:
+the apps it launched down with it. Its `ExecStopPost` then reaps the one
+helper that would otherwise outlive the shell, `nmcli monitor`. Details and rationale:
 [`uwsm-migration.md`](uwsm-migration.md) §2.2.
 
 Consequence: a rebuild that changes the unit restarts the shell via sd-switch

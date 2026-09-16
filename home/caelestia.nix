@@ -567,7 +567,32 @@ in {
   # along with it. Under execs.lua they sat in the compositor's cgroup, where
   # a shell restart never touched them. This keeps that behaviour. Apps still
   # end at logout, because they lose the Wayland display.
-  systemd.user.services.caelestia.Service.KillMode = "process";
+  #
+  # The price is that the shell's own long-running helpers survive it too.
+  # The only one is `nmcli monitor` (services/Nmcli.qml, plus
+  # services/VPN.qml while a VPN provider is selected). quickshell exits on
+  # SIGTERM without stopping its Process children, so each shell instance
+  # left one behind, reparented to the user manager and still in this
+  # cgroup. That meant one more after every restart and every logout,
+  # lingering until a NetworkManager event made its next write hit a closed
+  # pipe (3 of them after an hour of testing, 2026-09-16). ExecStopPost
+  # reaps exactly those: it runs once the main process is gone, inside this
+  # unit's cgroup, and kills only `nmcli monitor` processes found there.
+  # Launched apps and gpu-screen-recorder are left alone.
+  systemd.user.services.caelestia.Service = {
+    KillMode = "process";
+    ExecStopPost = "${pkgs.writeShellScript "caelestia-reap-nmcli-monitors" ''
+      PATH=${lib.makeBinPath [ pkgs.coreutils ]}
+      cg="/sys/fs/cgroup$(cut -d: -f3 /proc/self/cgroup)"
+      for pid in $(cat "$cg/cgroup.procs"); do
+        [ "$(cat "/proc/$pid/comm" 2>/dev/null)" = nmcli ] || continue
+        case "$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)" in
+          */nmcli\ monitor\ ) kill "$pid" 2>/dev/null ;;
+        esac
+      done
+      exit 0
+    ''}";
+  };
 
   # ── Polkit agent and clipboard history as units (UWSM only; the plain
   # session keeps the execs.lua lines, see the let block).
