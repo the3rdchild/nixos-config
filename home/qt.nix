@@ -323,11 +323,13 @@ in
 
   # ── The daemon.
   #
-  # WantedBy default.target, not graphical-session.target: this session starts
-  # Hyprland without uwsm and never reaches graphical-session.target (it reads
-  # `inactive`), so a unit hung off it would simply never run. default.target
-  # is active from login. Nothing here needs a compositor anyway — it writes a
-  # file and emits a D-Bus signal, both fine with no windows on screen.
+  # WantedBy default.target, not graphical-session.target. The default
+  # "Hyprland (uwsm-managed)" session does reach graphical-session.target, but
+  # the plain "Hyprland" fallback in the greeter never does (it reads
+  # `inactive`), so a unit hung off it would not run there. default.target is
+  # active from login in both. Nothing here needs a compositor anyway: it
+  # writes a file and emits a D-Bus signal, both fine with no windows on
+  # screen. See docs/uwsm-migration.md (2.3).
   systemd.user.services.kde-color-sync = {
     Unit = {
       Description = "Follow the session dark/light mode with a Breeze colour scheme";

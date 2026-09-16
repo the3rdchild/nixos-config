@@ -16,8 +16,9 @@
   # needs a dconf backend to persist anything.
   programs.dconf.enable = true;
 
-  # execs.lua starts polkit-gnome directly, but the policy daemon it talks
-  # to still has to be running.
+  # The polkit-gnome agent (services.polkit-gnome under UWSM, execs.lua in the
+  # plain session; see ../home/caelestia.nix) is only a client. The policy
+  # daemon it talks to still has to be running.
   security.polkit.enable = true;
 
   # gammastep's auto-location. The demo agent execs.lua launches is only the
@@ -76,13 +77,14 @@
   # than /etc/pam.d, and authenticates via pam_unix + the setuid
   # unix_chkpwd helper NixOS already provides in /run/wrappers.
 
-  # No polkit_gnome here. execs.lua already runs the agent by its store path
-  # (patched in ../home/caelestia.nix), so the package never had to be on the
-  # system profile — and being there put its XDG autostart entry in
-  # /run/current-system/sw/etc/xdg/autostart. Under UWSM that entry actually
-  # runs (xdg-desktop-autostart.target), loses the race to the execs.lua agent
-  # with "An authentication agent already exists for the given subject" and
-  # leaves a failed user unit behind on every login.
+  # No polkit_gnome here. Both ways the agent is started run it by store path
+  # (the home-manager unit and the execs.lua patch in ../home/caelestia.nix),
+  # so the package never had to be on the system profile. Having it there
+  # put its XDG autostart entry in /run/current-system/sw/etc/xdg/autostart.
+  # Under UWSM that entry actually runs (xdg-desktop-autostart.target), loses
+  # the race to the agent that is already registered ("An authentication
+  # agent already exists for the given subject"), and leaves a failed user
+  # unit behind on every login.
   environment.systemPackages = with pkgs; [
     xdg-desktop-portal-hyprland
     xdg-desktop-portal-gtk # file pickers for GTK apps under Hyprland

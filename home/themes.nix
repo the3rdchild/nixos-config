@@ -299,8 +299,9 @@ in
     '';
 
     # 3. Keep the GTK theme name in step with the mode (see gtkThemeSync).
-    #    default.target, not graphical-session.target — this session never
-    #    reaches the latter, same as the Qt watcher in ./qt.nix.
+    #    default.target, not graphical-session.target: the plain "Hyprland"
+    #    fallback session never reaches the latter (the UWSM default does).
+    #    Same reasoning as the Qt watcher in ./qt.nix.
     systemd.user.services.gtk-theme-sync = {
       Unit = {
         Description = "Point dconf's gtk-theme at the adw-gtk3 variant matching the session mode";

@@ -1,7 +1,8 @@
 # Hyprland → UWSM
 
-**Status: Tier 1 and 2.1 applied; UWSM login and logout verified
-2026-09-16.** The rest of the Tier 1 verify list (polkit, clipboard, theming,
+**Status: Tier 1, 2.1, 2.3 and most of 2.2 applied. UWSM login and logout
+verified 2026-09-16. The 2.2 units (shell, polkit, cliphist) are not yet
+verified.** The rest of the Tier 1 verify list (polkit, clipboard, theming,
 cursor, screen sharing) is still unchecked. This is the assessment and step
 list for moving the Hyprland session from a plain SDDM launch to
 [UWSM](https://github.com/Vladimir-csp/uwsm) (Universal Wayland Session
@@ -54,16 +55,16 @@ targets (`graphical-session-pre.target`, `graphical-session.target`,
 | Hyprland enabled     | `modules/package.nix`                                                                      | `programs.hyprland.enable = true`, `withUWSM = true`. Hyprland 0.56.0 (Lua config), uwsm 0.26.6. D-Bus was already `broker`, which `programs.uwsm` forces, so that part is a no-op.                                                                                                     |
 | Default session      | `modules/sddm.nix`                                                                         | `services.displayManager.defaultSession = "hyprland-uwsm"`. SilentSDDM greeter.                                                                                                                                                                                                               |
 | Environment          | dots`hypr/hyprland/env.lua` + `uwsm/env`, `uwsm/env-hyprland` (`home/caelestia.nix`) | `hl.env` for Qt/GDK/SDL/Electron backends, `XCURSOR_*`, `XDG_*`. `QT_QPA_PLATFORMTHEME` is patched to `kde` in `home/caelestia.nix`. The uwsm files carry the same values (minus `XDG_*`) for the systemd activation environment; see 2.1.                                        |
-| Autostart            | dots`hypr/hyprland/execs.lua`                                                              | On`hyprland.start`: gnome-keyring (secrets), polkit-gnome agent, 2× `wl-paste --watch cliphist store`, `trash-empty 30`, `hyprctl setcursor` + 2× `gsettings` cursor, geoclue demo agent, `mpris-proxy`, `caelestia shell -d`. gammastep is patched out.                        |
-| Shell service        | `home/caelestia.nix`                                                                       | `programs.caelestia.systemd.enable = false` — otherwise it would run a second shell next to the one `execs.lua` starts.                                                                                                                                                                    |
-| Session-mode daemons | `home/qt.nix`, `home/themes.nix`                                                         | `kde-color-sync`, `gtk-theme-sync`: `WantedBy = default.target`, with comments explaining that the graphical target is never reached.                                                                                                                                                     |
+| Autostart            | dots `hypr/hyprland/execs.lua` + user units (`home/caelestia.nix`) | On `hyprland.start`: gnome-keyring (secrets), `trash-empty 30`, `hyprctl setcursor` + 2× `gsettings` cursor, geoclue demo agent, `mpris-proxy`. The polkit-gnome agent, 2× `wl-paste --watch cliphist store` and the shell are also still there, wrapped so they run **only outside UWSM** (`unless-uwsm`, `caelestia-shell-up`). Under UWSM those three run as the `polkit-gnome`, `cliphist`/`cliphist-images` and `caelestia` user units instead. gammastep is patched out. |
+| Shell service        | `home/caelestia.nix` | `programs.caelestia.systemd.enable = true`, `KillMode=process`. The `caelestia` unit starts from `graphical-session.target`, so under UWSM only; the plain session starts the shell from `execs.lua` as before. See 2.2. |
+| Session-mode daemons | `home/qt.nix`, `home/themes.nix` | `kde-color-sync`, `gtk-theme-sync`: `WantedBy = default.target`, kept on purpose so they run in both sessions. The comments say so (2.3). |
 | Logout               | caelestia shell`SessionManager`, `shell.json`                                            | The shell's default`logout` alias is logind `Session.Terminate` over D-Bus, which hangs SDDM (see findings). `home/caelestia.nix` merges `session.commands.logout = ["uwsm", "stop"]` into `shell.json` (activation `caelestiaShellLogout`). No keybind in the dots exits Hyprland. |
 | XDG autostart        | `/run/current-system/sw/etc/xdg/autostart`, `~/.config/autostart`                        | Runs under UWSM only. blueman-applet and warp-taskbar start from here. The geoclue demo agent does too, then exits because`execs.lua` already started one. polkit-gnome and onboard entries were removed (see findings).                                                                      |
 | App launch           | caelestia shell`launcher/services/Apps.qml`                                                | `DesktopEntry.execute()` — started directly, no systemd scope.                                                                                                                                                                                                                               |
 
 ---
 
-## Tier 1 — switch the session (~30 min) — applied, not verified
+## Tier 1 — switch the session (~30 min) — applied; login and logout verified
 
 ```nix
 # modules/package.nix
@@ -173,7 +174,7 @@ came to life:
 
 ## Tier 2 — use it properly (half a day to a day)
 
-### 2.1 Environment variables → UWSM env files — applied, not verified
+### 2.1 Environment variables → UWSM env files — applied, verified
 
 Under UWSM, `hl.env` only reaches processes Hyprland spawns. Units in the user
 manager (portals, D-Bus-activated apps, anything from 2.2) get the systemd
@@ -221,7 +222,7 @@ Now in `home/caelestia.nix`, next to `caelestia/hypr-vars.lua`:
 
 Check with `systemctl --user show-environment` after login.
 
-### 2.2 Autostart → systemd user units (optional)
+### 2.2 Autostart → systemd user units — shell, polkit, cliphist applied, not verified
 
 Each `execs.lua` entry, and the unit that could replace it:
 
@@ -232,7 +233,7 @@ Each `execs.lua` entry, and the unit that could replace it:
 | 2×`wl-paste --watch cliphist store`                | `services.cliphist` (HM), `allowImages = true` | Target defaults to`wayland.systemd.target` (graphical-session).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `mpris-proxy`                                       | `services.mpris-proxy` (HM)                      | Bound to the user`bluetooth.target`, not the session — starts when a BT device connects.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | geoclue demo agent                                    | small custom user unit                             | Only useful if gammastep comes back. It could simply be dropped.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `caelestia shell -d`                                | `programs.caelestia.systemd.enable = true`       | Target defaults to`wayland.systemd.target`. **Must** be removed from `execs.lua` at the same time, or two shells run (see the comment in `home/caelestia.nix`). `keybinds.lua` starts the shell in **three** places, and all of them need patching: CTRL+SUPER+SHIFT+R (`qs -c caelestia kill`, kill only), CTRL+SUPER+ALT+R (kill, then `caelestia shell -d`) and `kbRestoreLock` (`caelestia shell -d`, then lock). `kbRestoreLock` matters most: it is the way back when the shell crashes while locked, and left alone it would start a second shell outside the unit. Check the unit's `Restart=` against the kill-only bind too. |
+| `caelestia shell -d`                                | `programs.caelestia.systemd.enable = true`       | Target defaults to`wayland.systemd.target`. **Must** be removed from `execs.lua` at the same time, or two shells run (see the comment in `home/caelestia.nix`). `keybinds.lua` touches the shell in **three** places, and the two that start it need patching: CTRL+SUPER+SHIFT+R (`qs -c caelestia kill`, kill only), CTRL+SUPER+ALT+R (kill, then `caelestia shell -d`) and `kbRestoreLock` (`caelestia shell -d`, then lock). `kbRestoreLock` matters most: it is the way back when the shell crashes while locked, and left alone it would start a second shell outside the unit. Check the unit's `Restart=` against the kill-only bind too. |
 | `trash-empty 30`                                    | user timer, or leave in`execs.lua`               | One-shot; nothing to supervise.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `hyprctl setcursor` + `gsettings` cursor          | leave in`execs.lua`                              | Needs the running compositor; cheap and idempotent.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 
@@ -242,7 +243,77 @@ each one is a place a `nix flake update caelestia-dots` can fail the build.
 That failure is loud, not silent, but it's still maintenance. Converting the
 shell, polkit and cliphist gets most of the benefit; the rest can stay.
 
-### 2.3 Theme daemons → `graphical-session.target`
+#### What was applied
+
+The shell, the polkit agent and both cliphist watchers are now user units.
+The rest of `execs.lua` is untouched. Everything is in `home/caelestia.nix`.
+
+- **Units:** `programs.caelestia.systemd.enable = true`,
+  `services.polkit-gnome` (plus `Restart=on-failure`, which upstream lacks)
+  and `services.cliphist` with `allowImages = true`. All four units are
+  WantedBy/PartOf `graphical-session.target`.
+- **The fallback session keeps working.** The plain "Hyprland" session never
+  reaches `graphical-session.target`, so deleting the `execs.lua` lines would
+  leave it with no bar, launcher, session menu, polkit prompts or clipboard
+  history. The lines are gated instead:
+  - `uwsm/env-hyprland` exports `CAELESTIA_UWSM=1`. uwsm sources that file
+    only for its own Hyprland session and unsets it on stop, so the marker is
+    present exactly when running under UWSM.
+  - `unless-uwsm <cmd>` exits 0 under UWSM and runs the command otherwise.
+    It wraps the polkit and both `wl-paste` lines.
+  - `caelestia-shell-up` runs `systemctl --user reset-failed` and then
+    `start --no-block caelestia.service` under UWSM, or
+    `caelestia shell -d` otherwise. It replaces the shell start in
+    `execs.lua` and both starts in `keybinds.lua` (CTRL+SUPER+ALT+R,
+    `kbRestoreLock`). `reset-failed` is there so `kbRestoreLock` still
+    recovers a shell that crashed often enough to hit the start limit.
+  - The patch cost is 3 new `--replace-fail` anchors, and the existing
+    polkit path patch changed.
+- **`KillMode=process` on `caelestia`.** Upstream's unit keeps the default
+  `control-group`. Apps opened from the launcher, session menu or dashboard
+  are children of the shell and live in its cgroup, so any restart (crash,
+  `systemctl --user restart caelestia`, or home-manager's sd-switch after a
+  unit change) would kill all of them. Under `execs.lua` they lived in the
+  compositor's cgroup, where a shell restart didn't touch them. 2.4
+  (launching apps into their own scopes) would make this unnecessary.
+- **cliphist parity:** `extraOptions = [ ]`. The module's default
+  `-max-dedupe-search 10 -max-items 500` would otherwise differ from the
+  `execs.lua` lines, which use cliphist's built-in 100 / 750, and both
+  sessions share one history database. The HM text unit watches without
+  `--type text`. An image copy can reach both units, and cliphist's dedupe
+  drops the duplicate.
+- **Unchanged:** CTRL+SUPER+SHIFT+R (`qs -c caelestia kill`). quickshell exits
+  on SIGTERM, which systemd counts as a clean stop, so `Restart=on-failure`
+  leaves the unit down as the bind intends.
+
+**Rolling it out.** home-manager uses `sd-switch`, and
+`graphical-session.target` is already active in the running UWSM session. So
+`nixos-rebuild switch` starts the four units immediately, next to the
+`execs.lua` copies that are already running (two shells, a failing duplicate
+polkit agent). Log out and back in from the menu right after switching.
+
+**Verify** (after the fresh login):
+
+```fish
+systemctl --user is-active caelestia polkit-gnome cliphist cliphist-images   # 4× active
+qs list --all | grep -c '^Instance'                  # 1
+pgrep -c -f 'wl-paste .*--watch'                     # 2 (both from the units)
+systemctl --user show caelestia -p KillMode          # KillMode=process
+systemctl --user --failed                            # empty
+```
+
+- [ ] One shell; bar, launcher, notifications work
+- [ ] CTRL+SUPER+ALT+R restarts the shell and apps opened from the launcher
+      stay open. CTRL+SUPER+SHIFT+R kills it, and the unit stays inactive.
+- [ ] Polkit prompt appears; SUPER+V history records text and images
+- [ ] Logout from the menu still returns to SDDM. `uwsm stop` is now forked
+      from the unit-run shell, so it sits in `caelestia.service`'s cgroup
+      while that unit is being stopped. `KillMode=process` should leave it
+      running, but that has only been reasoned through, not tested.
+- [ ] Plain "Hyprland" session still gets the shell, polkit and clipboard
+      history from `execs.lua` (optional; leave it via the menu's reboot)
+
+### 2.3 Theme daemons → `graphical-session.target` — applied (re-commented)
 
 `kde-color-sync` (`home/qt.nix`) and `gtk-theme-sync` (`home/themes.nix`)
 work fine as they are, so this is mostly about keeping the comments true.
@@ -253,8 +324,11 @@ Either:
 - keep `default.target` and just rewrite the comments. They don't need a
   compositor, so starting early is harmless.
 
-Do this only after dropping the non-UWSM session, or the comments will be
-wrong again whenever the fallback session is used.
+**Chosen: keep `default.target`.** The plain "Hyprland" session is still
+offered in the greeter as the fallback, and it never reaches
+`graphical-session.target`. Moving the units there would silently drop dark/
+light following in that session. The comments in both files now describe
+both sessions. Revisit if the fallback session is ever removed.
 
 ### 2.4 App launches into scopes (optional)
 
@@ -303,7 +377,8 @@ live in the compositor unit's cgroup and outside the `app-*.scope` drop-ins in
 - [ ] Tier 1: rest of the verify list (polkit, clipboard, Qt/GTK theme, cursor, screen sharing)
 - [X] 2.1: `uwsm/env` + `uwsm/env-hyprland`
 - [ ] 2.1: after a verified UWSM login, drop the `QT_QPA_PLATFORMTHEME` dots patch
-- [ ] 2.3: retarget or re-comment `kde-color-sync` / `gtk-theme-sync`
-- [ ] 2.2: shell, polkit and cliphist as units; patch `execs.lua` + restart bind
+- [X] 2.3: re-comment `kde-color-sync` / `gtk-theme-sync` (kept on `default.target`)
+- [X] 2.2: shell, polkit and cliphist as units; gate `execs.lua`, patch the `keybinds.lua` starts, `KillMode=process`
+- [ ] 2.2: switch, re-login, run the 2.2 verify list
 - [ ] 2.4: `uwsm app --` for the code bind / mime entry; decide on the launcher
 - [ ] Update this doc's status line and [`caelestia.md`](caelestia.md)

@@ -85,15 +85,25 @@ deliberately given up here — the alternative is an app that cannot save state.
 Everything else (`foot.ini`, `fastfetch/config.jsonc`, the hypr Lua) is only
 ever read, so it stays a symlink.
 
-### 4. The shell starts from Hyprland, not systemd
+### 4. The shell is a systemd unit under UWSM, an `execs.lua` exec otherwise
 
-`programs.caelestia.systemd.enable = false`. The hypr config already launches it
-(`caelestia shell -d` in `execs.lua`) and the restart keybind kills and respawns
-it the same way. Running the systemd unit *as well* gives two shells fighting
-over the same layer surfaces.
+`programs.caelestia.systemd.enable = true`. In the default "Hyprland
+(uwsm-managed)" session the `caelestia` user unit starts from
+`graphical-session.target`, with `Restart=on-failure` and logs in
+`journalctl --user -u caelestia`. The plain "Hyprland" fallback session never
+reaches that target, so there `execs.lua` still starts the shell. The polkit
+agent and cliphist watchers follow the same split.
 
-Consequence: **the shell only appears on a fresh session.** A rebuild alone
-will not start it.
+Only one of the two may ever run, because two shells fight over the same layer
+surfaces. The dots are patched so they can't both fire. `uwsm/env-hyprland`
+exports `CAELESTIA_UWSM=1`, and the `execs.lua` lines and both
+shell-starting keybinds go through `unless-uwsm` / `caelestia-shell-up`, which
+check it. The unit also has `KillMode=process`, so a shell restart doesn't take
+the apps it launched down with it. Details and rationale:
+[`uwsm-migration.md`](uwsm-migration.md) §2.2.
+
+Consequence: a rebuild that changes the unit restarts the shell via sd-switch
+under UWSM. In the plain session the shell still only appears on a fresh login.
 
 ---
 
@@ -237,10 +247,14 @@ If the dots update renames a patched path, the build fails at
 
 ## Troubleshooting
 
-**No bar after login.** Run `caelestia shell` in a foreground terminal and read
-the error. Do not guess.
+**No bar after login.** Under UWSM, start with
+`journalctl --user -u caelestia -b` and `systemctl --user status caelestia`. For
+a crash loop, `systemctl --user stop caelestia`, then run `caelestia shell` in a
+foreground terminal and read the error. Do not guess.
 
-**Shell alive but wrong/stale.** `CTRL+SUPER+ALT+R`, or
+**Shell alive but wrong/stale.** `CTRL+SUPER+ALT+R`. Under UWSM,
+`systemctl --user restart caelestia` does the same (launched apps survive,
+`KillMode=process`). In the plain session, use
 `qs -c caelestia kill; caelestia shell -d`.
 
 **`qs: command not found`.** `qs` must be the *same build* the shell runs.
