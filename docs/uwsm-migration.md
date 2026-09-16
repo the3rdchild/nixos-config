@@ -1,17 +1,14 @@
 # Hyprland → UWSM
 
-**Status (2026-09-16): all planned steps are applied.** That covers Tier 1,
-2.1, 2.2 (shell, polkit, cliphist), 2.3 and 2.4. Verified so far:
-- UWSM login and logout, including logout from the unit-run shell
-- the Tier 1 verify list
-- the 2.2 units coming up once, with no duplicates, plus the restart bind and
-  the nmcli reaper
-
-Still open:
-- the 2.4 verify list
-- the kill-only bind
-- launcher apps surviving a shell restart
-- the optional parts of 2.2 (keyring, mpris-proxy, geoclue, trash)
+**Status (2026-09-16): migration complete and verified.** Everything is
+applied and checked in a live session: Tier 1, 2.1, 2.2 (shell, polkit,
+cliphist), 2.3 and 2.4. Left open on purpose:
+- the optional parts of 2.2 (keyring, mpris-proxy, geoclue, trash), which
+  gain little
+- dropping the `QT_QPA_PLATFORMTHEME` dots patch (2.1), which the plain
+  fallback session still needs
+- the KIO `.service.d` memory drop-ins (2.4), added after the last
+  verification and not yet seen matching a Dolphin launch
 
 The first login also turned up two things the plan missed. **Logout through
 `Session.Terminate` hangs SDDM**, and **UWSM starts XDG autostart entries**.
@@ -343,9 +340,9 @@ systemctl --user --failed                            # empty
       kill-then-start, and does not need CTRL+SUPER+SHIFT+R first). The
       journal showed `Stopping` → `Stopped` → `Started` about 110 ms apart,
       twice, 2026-09-16.
-- [ ] Apps opened from the launcher stay open across that restart (not
-      observed yet: no launcher app was in the cgroup during the test).
-- [ ] CTRL+SUPER+SHIFT+R kills the shell, and `systemctl --user is-active
+- [x] Apps opened from the launcher stay open across that restart. Since
+      2.4 they aren't in the shell's cgroup at all.
+- [x] CTRL+SUPER+SHIFT+R kills the shell, and `systemctl --user is-active
       caelestia` stays `inactive` until CTRL+SUPER+ALT+R.
 - [x] After a restart, `pgrep -c -x nmcli` is 1, or 2 with a VPN provider
       selected (the reaper). Verified 2026-09-16: 1 after the restart following
@@ -381,7 +378,7 @@ offered in the greeter as the fallback, and it never reaches
 light following in that session. The comments in both files now describe
 both sessions. Revisit if the fallback session is ever removed.
 
-### 2.4 App launches into scopes — applied; VS Code, Edge (uwsm scope), Zen verified
+### 2.4 App launches into scopes — applied, verified
 
 Before this step, the caelestia launcher called `DesktopEntry.execute()`, a
 bare detached QProcess. Launched apps lived in the shell's cgroup
@@ -413,13 +410,21 @@ extension hosts live, and `app-code-` matched it.
   | Drop-in dir | Matches |
   |---|---|
   | `app-Hyprland-code-.scope.d` | uwsm scope for `code` (bind, service menu, launcher): zygote and renderers |
+  | `app-Hyprland-firefox-.scope.d` | Firefox from the launcher |
+  | `app-Hyprland-microsoft\x2dedge-.scope.d`, `app-Hyprland-com.microsoft.Edge-.scope.d` | Edge from the launcher, both desktop entries; literal backslash |
   | `app-code-.scope.d` | VS Code's self-created `app-code-<pid>.scope`: main process and extension hosts |
-  | `app-Hyprland-firefox-.scope.d` / `app-firefox-.scope.d` | Firefox from the launcher / from KIO (Dolphin) |
-  | `app-Hyprland-microsoft\x2dedge-.scope.d` | Edge via `microsoft-edge.desktop` (literal backslash) |
-  | `app-Hyprland-com.microsoft.Edge-.scope.d` | Edge via `com.microsoft.Edge.desktop`; both entries are installed |
-  | `app-org.chromium.Chromium-.scope.d` | Edge's self-created scope. Edge doesn't set `CHROME_DESKTOP`, so Chromium's default ID is used. It holds the main browser process (observed). The name is generic: any Chromium app without `CHROME_DESKTOP` lands here too |
-  | `app-microsoft-edge-.scope.d` | Launchers that name scopes after the desktop ID (not observed) |
+  | `app-org.chromium.Chromium-.scope.d` | Edge's self-created scope. Edge doesn't set `CHROME_DESKTOP`, so Chromium's default ID is used. It holds the main browser process. The name is generic: any Chromium app without `CHROME_DESKTOP` lands here too |
+  | `app-firefox@.service.d`, `app-microsoft\x2dedge@.service.d`, `app-com.microsoft.Edge@.service.d`, `app-code@.service.d` | KIO launches from Dolphin, which are transient **services** `app-<id>@<uuid>.service`, so these use `[Service]` sections |
   | `app-flatpak-app.zen_browser.zen-.scope.d` | Unchanged: `flatpak run` moves Zen into its own `app-flatpak-…` scope, whoever launched it |
+
+  The old `app-firefox-` and `app-microsoft-edge-` **scope** drop-ins are
+  gone. Nothing observed creates those names: Firefox never moves itself into
+  a scope, Edge's own scope uses the Chromium name, and KIO makes services.
+  KIO also stopped making `app-<id>-<pid>.scope`; the
+  `app-org.kde.konsole-<pid>.scope` entries in the journal date from the
+  Plasma session (August). Both escaped forms, `app-Hyprland-microsoft\x2dedge-…scope`
+  and `app-microsoft\x2dedge@….service`, were checked against real units
+  with a temporary runtime drop-in, and matched.
 
   **First try got this wrong.** It renamed `app-code-` to
   `app-Hyprland-code-` and dropped the old names. After the switch, VS Code
@@ -467,20 +472,25 @@ for u in (systemctl --user list-units --plain --no-legend 'app-Hyprland-*' | awk
 end
 ```
 
-- [ ] Launcher apps land in `app-Hyprland-<id>-….scope`, not in
-      `caelestia.service` (`systemd-cgls --user-unit caelestia` shows only the
-      shell and its helpers)
+- [x] Launcher apps land in `app-Hyprland-<id>-….scope`, not in
+      `caelestia.service`. After the tests that unit held only quickshell and
+      one `nmcli monitor`.
 - [x] VS Code: both `app-Hyprland-code-<hex>` and `app-code-<pid>` show
-      `MemoryHigh` 2 G after the fix (2026-09-16). On the first try only the
-      uwsm scope did; see the note above.
-- [x] Edge from the launcher: `app-Hyprland-microsoft\x2dedge-<hex>` shows
-      1 G, so the escaped drop-in matches (2026-09-16).
-- [ ] Edge's self-created `app-org.chromium.Chromium-<pid>` shows 1 G. It
-      was `infinity` before its drop-in was added.
+      `MemoryHigh` 2 G after the fix. On the first try only the uwsm scope did;
+      see the note above.
+- [x] Edge from the launcher: `app-Hyprland-microsoft\x2dedge-<hex>` and its
+      self-created `app-org.chromium.Chromium-<pid>` both show 1 G. The
+      Chromium one showed `infinity` until its drop-in was added.
+- [x] Firefox from the launcher: `app-Hyprland-firefox-<hex>` shows 1 G.
 - [x] Zen (`app-flatpak-app.zen_browser.zen-…`) still shows 1.5 G.
-- [ ] Firefox from the launcher (not tested yet)
-- [ ] A `Terminal=true` entry (e.g. btop, micro) still opens in foot
-- [ ] Dolphin → "Open with VS Code" opens, in an `app-Hyprland-code-` scope
+- [x] A `Terminal=true` entry (btop, micro) still opens in foot.
+- [x] Dolphin → "Open with VS Code" works. The journal shows KIO's
+      service-menu unit handing off to `uwsm app -- code`.
+- [ ] Dolphin → "Open with" Firefox, Edge or VS Code: the KIO
+      `app-<id>@<uuid>.service` shows a finite `MemoryHigh` (drop-ins added
+      after the rest of this list was verified).
+
+All verified 2026-09-16 unless marked open.
 
 ---
 
@@ -512,7 +522,8 @@ end
 - [X] 2.2: switch, re-login; units, duplicates and logout verified
 - [X] 2.2: polkit prompt, SUPER+V, restart bind (after the kill-bind fix)
 - [X] 2.2: nmcli reaper
-- [ ] 2.2: kill-only bind, launcher apps surviving a restart
-- [X] 2.4: `uwsm app` for the launcher, code bind and Dolphin menu; drop-ins renamed to `app-Hyprland-<id>-`
-- [ ] 2.4: switch, `daemon-reload`, run the 2.4 verify list
-- [ ] Update this doc's status line and [`caelestia.md`](caelestia.md)
+- [X] 2.2: kill-only bind, launcher apps surviving a restart
+- [X] 2.4: `uwsm app` for the launcher, code bind and Dolphin menu; drop-ins for uwsm, self-created and KIO unit names
+- [X] 2.4: switch, `daemon-reload`, run the 2.4 verify list
+- [ ] 2.4: KIO `.service.d` drop-ins seen matching a Dolphin "Open with" launch
+- [X] Update this doc's status line and [`caelestia.md`](caelestia.md)

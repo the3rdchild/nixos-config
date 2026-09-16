@@ -35,78 +35,89 @@
   # home-manager writes the file but does not reload the user manager for
   # plain config files.
   #
-  # The same drop-in covers the other apps used to test the web app. Their
-  # processes can end up in scopes named two different ways, and each app
-  # needs a drop-in for both:
+  # The same drop-in covers the other apps used to test the web app. How an
+  # app's processes are grouped depends on who launched it, and each way
+  # gives the unit a different name. These are the ones actually observed
+  # here (journal and live units, 2026-09-16):
   #
-  #   app-<desktop id>-<pid>.scope
-  #     Created by the app itself or by whatever launched it. Electron and
-  #     Chromium move their main process into one named after CHROME_DESKTOP:
-  #     VS Code's main process and extension hosts sit in app-code-<pid>.scope,
-  #     and the journal also shows app-obsidian- and app-org.chromium.Chromium-.
-  #     KIO does the same for apps opened from Dolphin (app-org.kde.konsole-…).
+  #   app-Hyprland-<desktop id or command>-<8 hex>.scope    [Scope]
+  #     `uwsm app`, used by the caelestia launcher (patched in ./caelestia.nix),
+  #     the SUPER+SHIFT+V bind and Dolphin's "Open with VS Code".
   #
-  #   app-Hyprland-<desktop id or command>-<8 hex>.scope
-  #     From `uwsm app`, used by the caelestia launcher (patched in
-  #     ./caelestia.nix), the SUPER+SHIFT+V bind and Dolphin's "Open with VS
-  #     Code". uwsm escapes `-` inside the name as \x2d, so microsoft-edge
-  #     becomes app-Hyprland-microsoft\x2dedge-…, and the drop-in directory
-  #     has to spell it the same way, literal backslash included.
+  #   app-<CHROME_DESKTOP id>-<pid>.scope                   [Scope]
+  #     Created by Electron/Chromium apps themselves, which move their main
+  #     process there a second after start, whoever launched them. VS Code:
+  #     app-code-<pid>, holding the main process and extension hosts. Edge
+  #     doesn't set CHROME_DESKTOP and falls back to Chromium's default ID,
+  #     app-org.chromium.Chromium-<pid>, holding its main browser process.
+  #     The journal also shows app-obsidian-. That Chromium name is generic:
+  #     any Chromium app without CHROME_DESKTOP would land there and get Edge's
+  #     limit. None has, so far.
   #
-  # For an Electron/Chromium app launched through uwsm, both scopes exist at
-  # once, split by process. On 2026-09-16, VS Code started from SUPER+SHIFT+V
-  # had its zygote and renderers (1.0 G) in app-Hyprland-code-<hex> and its
-  # main process plus extension hosts (1.4 G) in app-code-<pid>, created a
-  # second later. Each scope gets its own copy of the limit, so the effective
-  # ceiling for such an app is the sum of the two. That was already true
-  # before uwsm, when the SUPER+SHIFT+V wrapper scope and the self-created one
-  # were both app-code-.
+  #   app-<desktop id>@<32 hex>.service                     [Service]
+  #     KIO, for anything opened from Dolphin ("Open with", open terminal).
+  #     These are transient *services*, not scopes, so they need .service.d
+  #     drop-ins with a [Service] section. The app-org.kde.konsole-<pid>.scope
+  #     scopes older journals show are from the Plasma session, gone since
+  #     August.
   #
-  # Renaming app-code- to the uwsm name alone (2.4 of docs/uwsm-migration.md,
-  # first try) left the main process with MemoryHigh=infinity. That is why the
-  # old names stay next to the new ones.
+  # So an Electron/Chromium app is split across two units at once: the
+  # launcher's (uwsm scope or KIO service) with its renderers, GPU and
+  # utility processes, and its own scope with the main process. Each unit
+  # gets its own copy of the limit, so the effective ceiling for such an app
+  # is the sum of the two.
   #
-  # Edge has two desktop entries, microsoft-edge and com.microsoft.Edge, so
-  # both uwsm names are covered. Edge does NOT set CHROME_DESKTOP, so its
-  # self-created scope falls back to Chromium's default ID:
-  # app-org.chromium.Chromium-<pid>.scope. Observed 2026-09-16: that scope held
-  # Edge's main browser process (plus the Claude Code native-messaging host it
-  # spawns), and the uwsm scope held its renderers, GPU and utility processes.
-  # The name is generic. Any Chromium-based app that doesn't set
-  # CHROME_DESKTOP lands there too and gets Edge's limit, which is acceptable
-  # on this machine: journal history shows no other user of that name besides
-  # Edge. app-microsoft-edge- is kept for launchers that name scopes after the
-  # desktop ID (not observed). Firefox doesn't move itself into a scope, so
-  # app-firefox- only matches KIO launches.
+  # uwsm and KIO both escape `-` inside the ID as \x2d (microsoft-edge becomes
+  # app-Hyprland-microsoft\x2dedge-… and app-microsoft\x2dedge@….service).
+  # The drop-in directory has to spell it the same way, literal backslash
+  # included. Both escaped forms were checked against real units with a
+  # temporary runtime drop-in. Edge has two desktop entries, microsoft-edge and
+  # com.microsoft.Edge, so both IDs are covered.
   #
-  # Anything started with no scope at all (a bare keybind exec, a terminal
-  # command) runs in its parent's cgroup and escapes these limits.
+  # Nothing observed creates app-firefox-<n>.scope or
+  # app-microsoft-edge-<n>.scope (Firefox never moves itself into a scope;
+  # Edge's own scope has the Chromium name above). The drop-ins by those names
+  # that used to be here matched nothing, and are gone.
+  #
+  # Anything started with no unit of its own (a bare keybind exec, a command
+  # in a terminal) runs in its parent's cgroup and escapes these limits.
   #
   # VS Code gets more headroom than the browsers: throttling it lands on the
   # TypeScript server and extension host, which shows up as typing lag. The
   # writer-hub `next dev` container lives in Docker's cgroup, not here.
   xdg.configFile = let
-    limit = high: max: {
+    limit = section: high: max: {
       text = ''
-        [Scope]
+        [${section}]
         MemoryHigh=${high}
         MemoryMax=${max}
       '';
     };
-    dropIn = scope: "systemd/user/${scope}.scope.d/50-memory.conf";
+    scope = name: "systemd/user/${name}.scope.d/50-memory.conf";
+    service = name: "systemd/user/${name}.service.d/50-memory.conf";
+
+    browser = limit "Scope" "1G" "2G";
+    browserSvc = limit "Service" "1G" "2G";
+    editor = limit "Scope" "2G" "3.5G";
+    editorSvc = limit "Service" "2G" "3.5G";
   in {
-    ${dropIn "app-flatpak-app.zen_browser.zen-"} = limit "1.5G" "2.5G";
+    # flatpak runs every app in its own scope, whoever launched it.
+    ${scope "app-flatpak-app.zen_browser.zen-"} = limit "Scope" "1.5G" "2.5G";
 
-    # Self-created (Electron/Chromium) or KIO-launched scopes.
-    ${dropIn "app-firefox-"} = limit "1G" "2G";
-    ${dropIn "app-microsoft-edge-"} = limit "1G" "2G";
-    ${dropIn "app-org.chromium.Chromium-"} = limit "1G" "2G"; # Edge's main process
-    ${dropIn "app-code-"} = limit "2G" "3.5G";
+    # `uwsm app`: launcher, SUPER+SHIFT+V, Dolphin's Open with VS Code.
+    ${scope "app-Hyprland-firefox-"} = browser;
+    ${scope "app-Hyprland-microsoft\\x2dedge-"} = browser;
+    ${scope "app-Hyprland-com.microsoft.Edge-"} = browser;
+    ${scope "app-Hyprland-code-"} = editor;
 
-    # `uwsm app` scopes (launcher, SUPER+SHIFT+V, Dolphin's Open with VS Code).
-    ${dropIn "app-Hyprland-firefox-"} = limit "1G" "2G";
-    ${dropIn "app-Hyprland-microsoft\\x2dedge-"} = limit "1G" "2G";
-    ${dropIn "app-Hyprland-com.microsoft.Edge-"} = limit "1G" "2G";
-    ${dropIn "app-Hyprland-code-"} = limit "2G" "3.5G";
+    # Self-created by Electron/Chromium (main process).
+    ${scope "app-code-"} = editor;
+    ${scope "app-org.chromium.Chromium-"} = browser; # Edge
+
+    # KIO transient services (opened from Dolphin).
+    ${service "app-firefox@"} = browserSvc;
+    ${service "app-microsoft\\x2dedge@"} = browserSvc;
+    ${service "app-com.microsoft.Edge@"} = browserSvc;
+    ${service "app-code@"} = editorSvc;
   };
 }
