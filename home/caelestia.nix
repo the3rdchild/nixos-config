@@ -576,13 +576,13 @@ import qs.modules.nexus.pages.display' \
     # the initial and after-launcher focus target move; button order and
     # KeyNavigation stay upstream's. Both handlers sit inside the logout
     # button, but `shutdown` is an id in the same component, so it resolves.
-    # substituteInPlace $out/modules/session/Content.qml \
-    #   --replace-fail \
-    #     'Component.onCompleted: forceActiveFocus()' \
-    #     'Component.onCompleted: shutdown.forceActiveFocus()' \
-    #   --replace-fail \
-    #     'logout.forceActiveFocus();' \
-    #     'shutdown.forceActiveFocus();'
+    substituteInPlace $out/modules/session/Content.qml \
+      --replace-fail \
+        'Component.onCompleted: forceActiveFocus()' \
+        'Component.onCompleted: shutdown.forceActiveFocus()' \
+      --replace-fail \
+        'logout.forceActiveFocus();' \
+        'shutdown.forceActiveFocus();'
   '';
 
   # Rebuild from the patched tree rather than overriding the flake's package:
