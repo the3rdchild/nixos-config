@@ -1,8 +1,9 @@
 # Hyprland → UWSM
 
-**Status: Tier 1 and 2.1 applied; UWSM login verified 2026-09-16, logout
-fix pending a test.** This is the assessment and step list for moving the
-Hyprland session from a plain SDDM launch to
+**Status: Tier 1 and 2.1 applied; UWSM login and logout verified
+2026-09-16.** The rest of the Tier 1 verify list (polkit, clipboard, theming,
+cursor, screen sharing) is still unchecked. This is the assessment and step
+list for moving the Hyprland session from a plain SDDM launch to
 [UWSM](https://github.com/Vladimir-csp/uwsm) (Universal Wayland Session
 Manager). `withUWSM`, the `hyprland-uwsm` default session and the `uwsm/env*`
 files are in the tree, and a login under UWSM came up with the session
@@ -36,29 +37,29 @@ UWSM runs the compositor as a systemd user unit and brings up the standard
 targets (`graphical-session-pre.target`, `graphical-session.target`,
 `wayland-session@Hyprland.target`). What this machine gets from that:
 
-| Plain "Hyprland" session (before, and the fallback) | With UWSM |
-|---|---|
-| `graphical-session.target` is `inactive`. Anything bound to it never starts, which is why `kde-color-sync` and `gtk-theme-sync` hang off `default.target`. | The target is reached. Home-manager services with a `graphical-session` default work unchanged. |
-| Autostart is `hl.exec_cmd` in `execs.lua`. A crash stays dead, and output goes nowhere. | Autostart can be user units with `Restart=`, ordering, and logs in `journalctl --user`. |
-| Only the VS Code bind is wrapped in `systemd-run`. Apps from the caelestia launcher run in no scope, so the limits in `home/app-limits.nix` don't reach them. | `uwsm app --` (or `app2unit`) launches into a scope under `app.slice`, which is what the drop-ins match. |
-| Logout kills the logind session; nothing is stopped in order. | `uwsm stop` stops the graphical targets in order. (Killing the logind session is *not* a clean alternative here. See the findings below.) |
-| XDG autostart (`/etc/xdg/autostart`, `~/.config/autostart`) is never processed. | `xdg-desktop-autostart.target` runs it. This helps, but it also starts anything that was sitting there unnoticed. |
+| Plain "Hyprland" session (before, and the fallback)                                                                                                                  | With UWSM                                                                                                                                     |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `graphical-session.target` is `inactive`. Anything bound to it never starts, which is why `kde-color-sync` and `gtk-theme-sync` hang off `default.target`. | The target is reached. Home-manager services with a`graphical-session` default work unchanged.                                              |
+| Autostart is`hl.exec_cmd` in `execs.lua`. A crash stays dead, and output goes nowhere.                                                                           | Autostart can be user units with`Restart=`, ordering, and logs in `journalctl --user`.                                                    |
+| Only the VS Code bind is wrapped in`systemd-run`. Apps from the caelestia launcher run in no scope, so the limits in `home/app-limits.nix` don't reach them.     | `uwsm app --` (or `app2unit`) launches into a scope under `app.slice`, which is what the drop-ins match.                                |
+| Logout kills the logind session; nothing is stopped in order.                                                                                                        | `uwsm stop` stops the graphical targets in order. (Killing the logind session is *not* a clean alternative here. See the findings below.) |
+| XDG autostart (`/etc/xdg/autostart`, `~/.config/autostart`) is never processed.                                                                                  | `xdg-desktop-autostart.target` runs it. This helps, but it also starts anything that was sitting there unnoticed.                           |
 
 ---
 
 ## Current state (verified 2026-09-16)
 
-| Piece | Where | Notes |
-|---|---|---|
-| Hyprland enabled | `modules/package.nix` | `programs.hyprland.enable = true`, `withUWSM = true`. Hyprland 0.56.0 (Lua config), uwsm 0.26.6. D-Bus was already `broker`, which `programs.uwsm` forces, so that part is a no-op. |
-| Default session | `modules/sddm.nix` | `services.displayManager.defaultSession = "hyprland-uwsm"`. SilentSDDM greeter. |
-| Environment | dots `hypr/hyprland/env.lua` + `uwsm/env`, `uwsm/env-hyprland` (`home/caelestia.nix`) | `hl.env` for Qt/GDK/SDL/Electron backends, `XCURSOR_*`, `XDG_*`. `QT_QPA_PLATFORMTHEME` is patched to `kde` in `home/caelestia.nix`. The uwsm files carry the same values (minus `XDG_*`) for the systemd activation environment; see 2.1. |
-| Autostart | dots `hypr/hyprland/execs.lua` | On `hyprland.start`: gnome-keyring (secrets), polkit-gnome agent, 2× `wl-paste --watch cliphist store`, `trash-empty 30`, `hyprctl setcursor` + 2× `gsettings` cursor, geoclue demo agent, `mpris-proxy`, `caelestia shell -d`. gammastep is patched out. |
-| Shell service | `home/caelestia.nix` | `programs.caelestia.systemd.enable = false` — otherwise it would run a second shell next to the one `execs.lua` starts. |
-| Session-mode daemons | `home/qt.nix`, `home/themes.nix` | `kde-color-sync`, `gtk-theme-sync`: `WantedBy = default.target`, with comments explaining that the graphical target is never reached. |
-| Logout | caelestia shell `SessionManager`, `shell.json` | The shell's default `logout` alias is logind `Session.Terminate` over D-Bus, which hangs SDDM (see findings). `home/caelestia.nix` merges `session.commands.logout = ["uwsm", "stop"]` into `shell.json` (activation `caelestiaShellLogout`). No keybind in the dots exits Hyprland. |
-| XDG autostart | `/run/current-system/sw/etc/xdg/autostart`, `~/.config/autostart` | Runs under UWSM only. blueman-applet and warp-taskbar start from here. The geoclue demo agent does too, then exits because `execs.lua` already started one. polkit-gnome and onboard entries were removed (see findings). |
-| App launch | caelestia shell `launcher/services/Apps.qml` | `DesktopEntry.execute()` — started directly, no systemd scope. |
+| Piece                | Where                                                                                        | Notes                                                                                                                                                                                                                                                                                           |
+| -------------------- | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Hyprland enabled     | `modules/package.nix`                                                                      | `programs.hyprland.enable = true`, `withUWSM = true`. Hyprland 0.56.0 (Lua config), uwsm 0.26.6. D-Bus was already `broker`, which `programs.uwsm` forces, so that part is a no-op.                                                                                                     |
+| Default session      | `modules/sddm.nix`                                                                         | `services.displayManager.defaultSession = "hyprland-uwsm"`. SilentSDDM greeter.                                                                                                                                                                                                               |
+| Environment          | dots`hypr/hyprland/env.lua` + `uwsm/env`, `uwsm/env-hyprland` (`home/caelestia.nix`) | `hl.env` for Qt/GDK/SDL/Electron backends, `XCURSOR_*`, `XDG_*`. `QT_QPA_PLATFORMTHEME` is patched to `kde` in `home/caelestia.nix`. The uwsm files carry the same values (minus `XDG_*`) for the systemd activation environment; see 2.1.                                        |
+| Autostart            | dots`hypr/hyprland/execs.lua`                                                              | On`hyprland.start`: gnome-keyring (secrets), polkit-gnome agent, 2× `wl-paste --watch cliphist store`, `trash-empty 30`, `hyprctl setcursor` + 2× `gsettings` cursor, geoclue demo agent, `mpris-proxy`, `caelestia shell -d`. gammastep is patched out.                        |
+| Shell service        | `home/caelestia.nix`                                                                       | `programs.caelestia.systemd.enable = false` — otherwise it would run a second shell next to the one `execs.lua` starts.                                                                                                                                                                    |
+| Session-mode daemons | `home/qt.nix`, `home/themes.nix`                                                         | `kde-color-sync`, `gtk-theme-sync`: `WantedBy = default.target`, with comments explaining that the graphical target is never reached.                                                                                                                                                     |
+| Logout               | caelestia shell`SessionManager`, `shell.json`                                            | The shell's default`logout` alias is logind `Session.Terminate` over D-Bus, which hangs SDDM (see findings). `home/caelestia.nix` merges `session.commands.logout = ["uwsm", "stop"]` into `shell.json` (activation `caelestiaShellLogout`). No keybind in the dots exits Hyprland. |
+| XDG autostart        | `/run/current-system/sw/etc/xdg/autostart`, `~/.config/autostart`                        | Runs under UWSM only. blueman-applet and warp-taskbar start from here. The geoclue demo agent does too, then exits because`execs.lua` already started one. polkit-gnome and onboard entries were removed (see findings).                                                                      |
+| App launch           | caelestia shell`launcher/services/Apps.qml`                                                | `DesktopEntry.execute()` — started directly, no systemd scope.                                                                                                                                                                                                                               |
 
 ---
 
@@ -115,12 +116,15 @@ Then test the things most likely to break:
 - [ ] Qt apps follow dark/light (`kde` platform theme); GTK too
 - [ ] Cursor theme/size correct in both Wayland and XWayland apps
 - [ ] Screen sharing / portals (Hyprland portal) in the browser
-- [ ] **Logout from the caelestia session menu returns to SDDM**, and a
-      fresh login from there starts cleanly (no leftover `wayland-wm@*`
-      unit). The menu now runs `uwsm stop`, which has not been tested yet.
-      Check `jq .session ~/.config/caelestia/shell.json` first, and have
-      nothing unsaved open.
-- [ ] `systemctl --user --failed` is empty after login
+- [x] **Logout from the caelestia session menu returns to SDDM**, and a
+  fresh login from there starts cleanly (no leftover `wayland-wm@*`
+  unit). Verified 2026-09-16 with the menu running `uwsm stop`: the units
+  stopped in order, `wayland-wm@hyprland.desktop.service` exited cleanly
+  with no coredump, SDDM logged `sddm-helper exited successfully`, and the
+  greeter was back within ~4s. To confirm the command is in place:
+  `python3 -c "import json;print(json.load(open('$HOME/.config/caelestia/shell.json'))['session'])"`
+  (jq is not installed).
+- [x] `systemctl --user --failed` is empty after login
 
 **Rollback:** pick "Hyprland" at the greeter, or revert the two lines. The
 menu's logout does nothing in that session, because there is no UWSM session
@@ -133,8 +137,7 @@ the menu's reboot or shutdown. Do **not** use `loginctl terminate-session`.
 This was hit from the plain Hyprland session, while switching to UWSM:
 
 - logind kills every process in the session scope, including `sddm-helper`.
-  SDDM logs `Auth: sddm-helper (… --start …/start-hyprland …) crashed (exit
-  code 1)` and then never starts the greeter again. The screen stays on a
+  SDDM logs `Auth: sddm-helper (… --start …/start-hyprland …) crashed (exit code 1)` and then never starts the greeter again. The screen stays on a
   bare VT with a blinking cursor and takes no input.
 - `start-hyprland` also dumped core (SIGABRT from `std::thread::join` inside
   its own signal handler). That is noise next to the SDDM problem.
@@ -157,14 +160,14 @@ power off cleanly. Before that, try CTRL+ALT+F3, log in, and run
 plain session never did this, so entries that had been sitting there unused
 came to life:
 
-| Entry | Source | What happened | Action |
-|---|---|---|---|
-| `onboard` | `home/onboard.nix` (`~/.config/autostart`) | Started the X11 on-screen keyboard, which wvkbd (SUPER+SHIFT+K) replaced | Module removed |
-| `polkit-gnome-authentication-agent-1` | `polkit_gnome` in system packages | Lost the race to the `execs.lua` agent ("An authentication agent already exists"), left a failed unit | Package dropped from `modules/hyprland-desktop.nix`; `execs.lua` runs it by store path |
-| `blueman` | `services.blueman` | blueman-applet in the tray | Kept |
-| `com.cloudflare.WarpTaskbar` | cloudflare-warp | warp-taskbar in the tray | Kept |
-| `geoclue-demo-agent` | `services.geoclue2` | "Another instance … is running", exits 0 | Kept; harmless, goes away with 2.2 |
-| `xdg-user-dirs` | `xdg-user-dirs` | One-shot update | Kept |
+| Entry                                   | Source                                         | What happened                                                                                          | Action                                                                                    |
+| --------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
+| `onboard`                             | `home/onboard.nix` (`~/.config/autostart`) | Started the X11 on-screen keyboard, which wvkbd (SUPER+SHIFT+K) replaced                               | Module removed                                                                            |
+| `polkit-gnome-authentication-agent-1` | `polkit_gnome` in system packages            | Lost the race to the`execs.lua` agent ("An authentication agent already exists"), left a failed unit | Package dropped from`modules/hyprland-desktop.nix`; `execs.lua` runs it by store path |
+| `blueman`                             | `services.blueman`                           | blueman-applet in the tray                                                                             | Kept                                                                                      |
+| `com.cloudflare.WarpTaskbar`          | cloudflare-warp                                | warp-taskbar in the tray                                                                               | Kept                                                                                      |
+| `geoclue-demo-agent`                  | `services.geoclue2`                          | "Another instance … is running", exits 0                                                              | Kept; harmless, goes away with 2.2                                                        |
+| `xdg-user-dirs`                       | `xdg-user-dirs`                              | One-shot update                                                                                        | Kept                                                                                      |
 
 ---
 
@@ -222,16 +225,16 @@ Check with `systemctl --user show-environment` after login.
 
 Each `execs.lua` entry, and the unit that could replace it:
 
-| `execs.lua` | Replacement | Notes |
-|---|---|---|
-| `gnome-keyring-daemon --start --components=secrets` | `services.gnome-keyring` (HM) | WantedBy `graphical-session-pre.target`. Set `components = [ "secrets" ]`. Check it doesn't collide with a PAM-started keyring. |
-| polkit-gnome agent | `services.polkit-gnome` (HM) | WantedBy `graphical-session.target`. |
-| 2× `wl-paste --watch cliphist store` | `services.cliphist` (HM), `allowImages = true` | Target defaults to `wayland.systemd.target` (graphical-session). |
-| `mpris-proxy` | `services.mpris-proxy` (HM) | Bound to the user `bluetooth.target`, not the session — starts when a BT device connects. |
-| geoclue demo agent | small custom user unit | Only useful if gammastep comes back. It could simply be dropped. |
-| `caelestia shell -d` | `programs.caelestia.systemd.enable = true` | Target defaults to `wayland.systemd.target`. **Must** be removed from `execs.lua` at the same time, or two shells run (see the comment in `home/caelestia.nix`). `keybinds.lua` starts the shell in **three** places, and all of them need patching: CTRL+SUPER+SHIFT+R (`qs -c caelestia kill`, kill only), CTRL+SUPER+ALT+R (kill, then `caelestia shell -d`) and `kbRestoreLock` (`caelestia shell -d`, then lock). `kbRestoreLock` matters most: it is the way back when the shell crashes while locked, and left alone it would start a second shell outside the unit. Check the unit's `Restart=` against the kill-only bind too. |
-| `trash-empty 30` | user timer, or leave in `execs.lua` | One-shot; nothing to supervise. |
-| `hyprctl setcursor` + `gsettings` cursor | leave in `execs.lua` | Needs the running compositor; cheap and idempotent. |
+| `execs.lua`                                         | Replacement                                        | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ----------------------------------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `gnome-keyring-daemon --start --components=secrets` | `services.gnome-keyring` (HM)                    | WantedBy`graphical-session-pre.target`. Set `components = [ "secrets" ]`. Check it doesn't collide with a PAM-started keyring.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| polkit-gnome agent                                    | `services.polkit-gnome` (HM)                     | WantedBy`graphical-session.target`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 2×`wl-paste --watch cliphist store`                | `services.cliphist` (HM), `allowImages = true` | Target defaults to`wayland.systemd.target` (graphical-session).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `mpris-proxy`                                       | `services.mpris-proxy` (HM)                      | Bound to the user`bluetooth.target`, not the session — starts when a BT device connects.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| geoclue demo agent                                    | small custom user unit                             | Only useful if gammastep comes back. It could simply be dropped.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `caelestia shell -d`                                | `programs.caelestia.systemd.enable = true`       | Target defaults to`wayland.systemd.target`. **Must** be removed from `execs.lua` at the same time, or two shells run (see the comment in `home/caelestia.nix`). `keybinds.lua` starts the shell in **three** places, and all of them need patching: CTRL+SUPER+SHIFT+R (`qs -c caelestia kill`, kill only), CTRL+SUPER+ALT+R (kill, then `caelestia shell -d`) and `kbRestoreLock` (`caelestia shell -d`, then lock). `kbRestoreLock` matters most: it is the way back when the shell crashes while locked, and left alone it would start a second shell outside the unit. Check the unit's `Restart=` against the kill-only bind too. |
+| `trash-empty 30`                                    | user timer, or leave in`execs.lua`               | One-shot; nothing to supervise.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `hyprctl setcursor` + `gsettings` cursor          | leave in`execs.lua`                              | Needs the running compositor; cheap and idempotent.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 
 **Cost:** `execs.lua` is upstream-verbatim apart from the existing patches.
 Each line removed is another `--replace-fail` in `home/caelestia.nix`, and
@@ -279,25 +282,26 @@ live in the compositor unit's cgroup and outside the `app-*.scope` drop-ins in
 
 ## Risks and open questions
 
-| Risk | Likelihood | Mitigation |
-|---|---|---|
-| Env var only in `env.lua` → wrong theming in systemd/D-Bus-started apps | Medium | 2.1; compare `show-environment` with `env` in a terminal. |
-| Double caelestia shell | High *if* 2.2 is half-done | Flip `systemd.enable` and remove the exec in the same commit. |
-| Logout via `Session.Terminate` hangs SDDM | **Happened** (plain session, 2026-09-16) | Shell logout is now `uwsm stop`. Never use `loginctl terminate-session` to leave a session. SysRq S-U-B is the way out if the display hangs anyway. |
-| `uwsm stop` from the menu doesn't return to SDDM either | Low, untested | Tier 1 checklist. Test with nothing unsaved; recover with CTRL+ALT+F3 → `sudo systemctl restart display-manager`, or SysRq. |
-| A newly installed package's XDG autostart entry starts unexpectedly | Medium over time | Check `systemctl --user list-units 'app-*@autostart.service'` after adding GUI packages. |
-| Flake bump breaks a new `--replace-fail` | Medium over time | Keep Tier 2 patches minimal; the failure shows up at build time. |
-| SilentSDDM doesn't honour `defaultSession` | Low | Pick the session manually once; the greeter remembers the last one. |
+| Risk                                                                      | Likelihood                                     | Mitigation                                                                                                                                             |
+| ------------------------------------------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Env var only in`env.lua` → wrong theming in systemd/D-Bus-started apps | Medium                                         | 2.1; compare`show-environment` with `env` in a terminal.                                                                                           |
+| Double caelestia shell                                                    | High*if* 2.2 is half-done                    | Flip`systemd.enable` and remove the exec in the same commit.                                                                                         |
+| Logout via`Session.Terminate` hangs SDDM                                | **Happened** (plain session, 2026-09-16) | Shell logout is now`uwsm stop`. Never use `loginctl terminate-session` to leave a session. SysRq S-U-B is the way out if the display hangs anyway. |
+| `uwsm stop` from the menu doesn't return to SDDM either | Low; verified working 2026-09-16 | If it ever regresses (e.g. after an SDDM or uwsm bump): CTRL+ALT+F3 → `sudo systemctl restart display-manager`, or SysRq. |
+| A newly installed package's XDG autostart entry starts unexpectedly       | Medium over time                               | Check`systemctl --user list-units 'app-*@autostart.service'` after adding GUI packages.                                                              |
+| Flake bump breaks a new`--replace-fail`                                 | Medium over time                               | Keep Tier 2 patches minimal; the failure shows up at build time.                                                                                       |
+| SilentSDDM doesn't honour`defaultSession`                               | Low                                            | Pick the session manually once; the greeter remembers the last one.                                                                                    |
 
 ---
 
 ## Checklist
 
-- [x] Tier 1: `withUWSM` + `defaultSession` in the tree
-- [x] Tier 1: `nixos-rebuild switch`, log into "Hyprland (uwsm-managed)"; targets, env, autostart checked
-- [x] Tier 1: logout via `uwsm stop`, XDG autostart cleanup, `kernel.sysrq = 176`
-- [ ] Tier 1: test logout from the caelestia menu; run the rest of the verify list
-- [x] 2.1: `uwsm/env` + `uwsm/env-hyprland`
+- [X] Tier 1: `withUWSM` + `defaultSession` in the tree
+- [X] Tier 1: `nixos-rebuild switch`, log into "Hyprland (uwsm-managed)"; targets, env, autostart checked
+- [X] Tier 1: logout via `uwsm stop`, XDG autostart cleanup, `kernel.sysrq = 176`
+- [X] Tier 1: logout from the caelestia menu back to SDDM, and log in again
+- [ ] Tier 1: rest of the verify list (polkit, clipboard, Qt/GTK theme, cursor, screen sharing)
+- [X] 2.1: `uwsm/env` + `uwsm/env-hyprland`
 - [ ] 2.1: after a verified UWSM login, drop the `QT_QPA_PLATFORMTHEME` dots patch
 - [ ] 2.3: retarget or re-comment `kde-color-sync` / `gtk-theme-sync`
 - [ ] 2.2: shell, polkit and cliphist as units; patch `execs.lua` + restart bind
