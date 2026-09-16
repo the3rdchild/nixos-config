@@ -67,10 +67,17 @@
   # old names stay next to the new ones.
   #
   # Edge has two desktop entries, microsoft-edge and com.microsoft.Edge, so
-  # both uwsm names are covered. Edge's own self-created scope name has not
-  # been observed here; app-microsoft-edge- assumes Chromium's CHROME_DESKTOP
-  # naming. Firefox doesn't move itself into a scope, so app-firefox- only
-  # matches KIO launches.
+  # both uwsm names are covered. Edge does NOT set CHROME_DESKTOP, so its
+  # self-created scope falls back to Chromium's default ID:
+  # app-org.chromium.Chromium-<pid>.scope. Observed 2026-09-16: that scope held
+  # Edge's main browser process (plus the Claude Code native-messaging host it
+  # spawns), and the uwsm scope held its renderers, GPU and utility processes.
+  # The name is generic. Any Chromium-based app that doesn't set
+  # CHROME_DESKTOP lands there too and gets Edge's limit, which is acceptable
+  # on this machine: journal history shows no other user of that name besides
+  # Edge. app-microsoft-edge- is kept for launchers that name scopes after the
+  # desktop ID (not observed). Firefox doesn't move itself into a scope, so
+  # app-firefox- only matches KIO launches.
   #
   # Anything started with no scope at all (a bare keybind exec, a terminal
   # command) runs in its parent's cgroup and escapes these limits.
@@ -93,6 +100,7 @@
     # Self-created (Electron/Chromium) or KIO-launched scopes.
     ${dropIn "app-firefox-"} = limit "1G" "2G";
     ${dropIn "app-microsoft-edge-"} = limit "1G" "2G";
+    ${dropIn "app-org.chromium.Chromium-"} = limit "1G" "2G"; # Edge's main process
     ${dropIn "app-code-"} = limit "2G" "3.5G";
 
     # `uwsm app` scopes (launcher, SUPER+SHIFT+V, Dolphin's Open with VS Code).

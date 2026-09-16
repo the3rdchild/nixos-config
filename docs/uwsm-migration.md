@@ -381,7 +381,7 @@ offered in the greeter as the fallback, and it never reaches
 light following in that session. The comments in both files now describe
 both sessions. Revisit if the fallback session is ever removed.
 
-### 2.4 App launches into scopes — applied, VS Code verified
+### 2.4 App launches into scopes — applied; VS Code, Edge (uwsm scope), Zen verified
 
 Before this step, the caelestia launcher called `DesktopEntry.execute()`, a
 bare detached QProcess. Launched apps lived in the shell's cgroup
@@ -417,7 +417,8 @@ extension hosts live, and `app-code-` matched it.
   | `app-Hyprland-firefox-.scope.d` / `app-firefox-.scope.d` | Firefox from the launcher / from KIO (Dolphin) |
   | `app-Hyprland-microsoft\x2dedge-.scope.d` | Edge via `microsoft-edge.desktop` (literal backslash) |
   | `app-Hyprland-com.microsoft.Edge-.scope.d` | Edge via `com.microsoft.Edge.desktop`; both entries are installed |
-  | `app-microsoft-edge-.scope.d` | Edge's self-created scope, assuming Chromium's `CHROME_DESKTOP` naming (not observed yet) |
+  | `app-org.chromium.Chromium-.scope.d` | Edge's self-created scope. Edge doesn't set `CHROME_DESKTOP`, so Chromium's default ID is used. It holds the main browser process (observed). The name is generic: any Chromium app without `CHROME_DESKTOP` lands here too |
+  | `app-microsoft-edge-.scope.d` | Launchers that name scopes after the desktop ID (not observed) |
   | `app-flatpak-app.zen_browser.zen-.scope.d` | Unchanged: `flatpak run` moves Zen into its own `app-flatpak-…` scope, whoever launched it |
 
   **First try got this wrong.** It renamed `app-code-` to
@@ -469,12 +470,15 @@ end
 - [ ] Launcher apps land in `app-Hyprland-<id>-….scope`, not in
       `caelestia.service` (`systemd-cgls --user-unit caelestia` shows only the
       shell and its helpers)
-- [ ] VS Code: both `app-Hyprland-code-<hex>` and `app-code-<pid>` list
-      `50-memory.conf` and show a finite `MemoryHigh`. On the first try only
-      the uwsm scope did; see the note above.
-- [ ] Firefox and Edge from the launcher: their `app-Hyprland-…` scope lists
-      `50-memory.conf`. For Edge, also note the name of any self-created
-      `app-…-<pid>.scope` and whether it matched.
+- [x] VS Code: both `app-Hyprland-code-<hex>` and `app-code-<pid>` show
+      `MemoryHigh` 2 G after the fix (2026-09-16). On the first try only the
+      uwsm scope did; see the note above.
+- [x] Edge from the launcher: `app-Hyprland-microsoft\x2dedge-<hex>` shows
+      1 G, so the escaped drop-in matches (2026-09-16).
+- [ ] Edge's self-created `app-org.chromium.Chromium-<pid>` shows 1 G. It
+      was `infinity` before its drop-in was added.
+- [x] Zen (`app-flatpak-app.zen_browser.zen-…`) still shows 1.5 G.
+- [ ] Firefox from the launcher (not tested yet)
 - [ ] A `Terminal=true` entry (e.g. btop, micro) still opens in foot
 - [ ] Dolphin → "Open with VS Code" opens, in an `app-Hyprland-code-` scope
 
