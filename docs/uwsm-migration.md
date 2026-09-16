@@ -234,7 +234,7 @@ Each `execs.lua` entry, and the unit that could replace it:
 | 2×`wl-paste --watch cliphist store`                | `services.cliphist` (HM), `allowImages = true` | Target defaults to`wayland.systemd.target` (graphical-session).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `mpris-proxy`                                       | `services.mpris-proxy` (HM)                      | Bound to the user`bluetooth.target`, not the session — starts when a BT device connects.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | geoclue demo agent                                    | small custom user unit                             | Only useful if gammastep comes back. It could simply be dropped.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `caelestia shell -d`                                | `programs.caelestia.systemd.enable = true`       | Target defaults to`wayland.systemd.target`. **Must** be removed from `execs.lua` at the same time, or two shells run (see the comment in `home/caelestia.nix`). `keybinds.lua` touches the shell in **three** places, and the two that start it need patching: CTRL+SUPER+SHIFT+R (`qs -c caelestia kill`, kill only), CTRL+SUPER+ALT+R (kill, then `caelestia shell -d`) and `kbRestoreLock` (`caelestia shell -d`, then lock). `kbRestoreLock` matters most: it is the way back when the shell crashes while locked, and left alone it would start a second shell outside the unit. Check the unit's `Restart=` against the kill-only bind too. |
+| `caelestia shell -d`                                | `programs.caelestia.systemd.enable = true`       | Target defaults to`wayland.systemd.target`. **Must** be removed from `execs.lua` at the same time, or two shells run (see the comment in `home/caelestia.nix`). `keybinds.lua` touches the shell in **three** places, and all three need patching: CTRL+SUPER+SHIFT+R (`qs -c caelestia kill`, kill only), CTRL+SUPER+ALT+R (kill, then `caelestia shell -d`) and `kbRestoreLock` (`caelestia shell -d`, then lock). `kbRestoreLock` matters most: it is the way back when the shell crashes while locked, and left alone it would start a second shell outside the unit. The `qs -c caelestia kill` half was already broken on NixOS, in both sessions (see What was applied). |
 | `trash-empty 30`                                    | user timer, or leave in`execs.lua`               | One-shot; nothing to supervise.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `hyprctl setcursor` + `gsettings` cursor          | leave in`execs.lua`                              | Needs the running compositor; cheap and idempotent.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 
@@ -283,9 +283,19 @@ The rest of `execs.lua` is untouched. Everything is in `home/caelestia.nix`.
   sessions share one history database. The HM text unit watches without
   `--type text`. An image copy can reach both units, and cliphist's dedupe
   drops the duplicate.
-- **Unchanged:** CTRL+SUPER+SHIFT+R (`qs -c caelestia kill`). quickshell exits
-  on SIGTERM, which systemd counts as a clean stop, so `Restart=on-failure`
-  leaves the unit down as the bind intends.
+- **Kill binds fixed (found 2026-09-16, after the rollout).** CTRL+SUPER+SHIFT+R
+  and CTRL+SUPER+ALT+R both kill with upstream's `qs -c caelestia kill`, and
+  that has never worked here, in either session. `-c` looks for
+  `~/.config/quickshell/caelestia/`, but the shell runs from its store path,
+  so qs prints `Could not find "caelestia" config directory` and kills
+  nothing. The kill bind did nothing, and the restart bind only "started" a
+  shell that was still running. Both now go through `caelestia-shell-kill`
+  (`--replace-fail 'qs -c caelestia kill'`, 2 occurrences). Under UWSM it runs
+  `systemctl --user stop caelestia`: the unit is left inactive, and
+  `Restart=on-failure` doesn't undo it. `stop` blocks until the process is
+  gone, so the restart bind's `; sleep .1; caelestia-shell-up` starts a fresh
+  shell. Otherwise it runs `caelestia shell -k`, i.e. `caelestia-shell kill`,
+  whose wrapper passes the store path.
 
 **Rolling it out.** home-manager uses `sd-switch`, and
 `graphical-session.target` is already active in the running UWSM session. So
@@ -313,6 +323,11 @@ systemctl --user --failed                            # empty
 - [ ] Bar, launcher, notifications work
 - [ ] CTRL+SUPER+ALT+R restarts the shell and apps opened from the launcher
       stay open. CTRL+SUPER+SHIFT+R kills it, and the unit stays inactive.
+      The first test failed: the binds did nothing, because of the broken
+      `qs -c caelestia kill` above. Retest after the `caelestia-shell-kill`
+      fix. Use the physical SUPER key: the CTRL+ESC → SUPER chord
+      (`modules/hyprland-desktop.nix`) releases CTRL, so it can't produce
+      CTRL+SUPER combos.
 - [ ] Polkit prompt appears; SUPER+V history records text and images
 - [x] Logout from the menu still returns to SDDM. `uwsm stop` is forked from
       the unit-run shell, so it sits in `caelestia.service`'s cgroup while

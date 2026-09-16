@@ -56,14 +56,21 @@
     # then start) and vars.kbRestoreLock (start, then lock). The second one is
     # the way back when the shell dies while the screen is locked. Left as
     # plain `caelestia shell -d` under UWSM, both would start a second shell
-    # outside the unit, so both go through caelestia-shell-up. --replace-fail
-    # replaces every occurrence and fails only if there are none.
+    # outside the unit, so both go through caelestia-shell-up.
     #
-    # CTRL+SUPER+SHIFT+R (`qs -c caelestia kill`) needs no change. quickshell
-    # exits on SIGTERM, which systemd counts as a clean stop, so
-    # Restart=on-failure leaves the unit down, as the bind intends.
+    # It kills the shell in two places too: CTRL+SUPER+SHIFT+R (kill only) and
+    # the first half of CTRL+SUPER+ALT+R. Upstream's `qs -c caelestia kill`
+    # never worked on NixOS, in either session. `-c` looks for a config
+    # directory named caelestia under ~/.config/quickshell, but the shell runs
+    # from its store path, so qs reports 'Could not find "caelestia" config
+    # directory' and kills nothing. That made the kill bind a no-op, and the
+    # restart bind a no-op start of a shell that was still running.
+    # caelestia-shell-kill picks the right way for each session.
+    #
+    # --replace-fail replaces every occurrence and fails only if there are none.
     substituteInPlace $out/hypr/hyprland/keybinds.lua \
-      --replace-fail 'caelestia shell -d' '${shellUp}/bin/caelestia-shell-up'
+      --replace-fail 'caelestia shell -d' '${shellUp}/bin/caelestia-shell-up' \
+      --replace-fail 'qs -c caelestia kill' '${shellKill}/bin/caelestia-shell-kill'
 
     # QT_QPA_PLATFORMTHEME=qtengine — qtengine is AUR-only, and the rest of
     # caelestia's Qt support writes to ~/.config/qtengine/ where nothing on
@@ -118,9 +125,10 @@
     );
   };
 
-  # The `qs` CLI, which keybinds.lua uses to kill/restart the shell
-  # (CTRL+SUPER+SHIFT+R and CTRL+SUPER+ALT+R). The shell derivation bundles
-  # quickshell inside its own wrapper, so nothing puts `qs` on PATH.
+  # The `qs` CLI, for inspecting the running shell by hand (`qs list --all`,
+  # `qs ipc`). The kill/restart keybinds no longer use it; see
+  # caelestia-shell-kill. The shell derivation bundles quickshell inside its
+  # own wrapper, so nothing puts `qs` on PATH.
   #
   # This MUST be the exact quickshell the shell was built against, with the
   # same overrides as shell/flake.nix applies — nixpkgs' tagged quickshell is
@@ -503,6 +511,25 @@ import qs.modules.nexus.pages.display' \
       exec systemctl --user start --no-block caelestia.service
     fi
     exec caelestia shell -d
+  '';
+
+  # Stop the shell, the counterpart of caelestia-shell-up.
+  #
+  # Under UWSM this is `systemctl --user stop`, so the unit is actually
+  # inactive afterwards. Restart=on-failure would not bring back a shell that
+  # was stopped this way. `stop` blocks until the process is gone (the unit's
+  # TimeoutStopSec is 5s), so CTRL+SUPER+ALT+R's `; sleep .1;
+  # caelestia-shell-up` starts a fresh one rather than racing the old one.
+  # KillMode=process keeps apps launched from the shell alive through it.
+  #
+  # Otherwise `caelestia shell -k`, which runs `caelestia-shell kill`. That
+  # wrapper passes the shell's own store path to qs, which is what
+  # `qs -c caelestia` gets wrong here.
+  shellKill = pkgs.writeShellScriptBin "caelestia-shell-kill" ''
+    if [ -n "''${CAELESTIA_UWSM:-}" ]; then
+      exec systemctl --user stop caelestia.service
+    fi
+    exec caelestia shell -k
   '';
 in {
   imports = [ inputs.caelestia-shell.homeManagerModules.default ];

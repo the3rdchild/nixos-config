@@ -255,7 +255,9 @@ foreground terminal and read the error. Do not guess.
 **Shell alive but wrong/stale.** `CTRL+SUPER+ALT+R`. Under UWSM,
 `systemctl --user restart caelestia` does the same (launched apps survive,
 `KillMode=process`). In the plain session, use
-`qs -c caelestia kill; caelestia shell -d`.
+`caelestia shell -k; caelestia shell -d`. Don't use `qs -c caelestia kill`:
+the shell runs from its store path, not `~/.config/quickshell/caelestia`, so
+`-c caelestia` finds nothing to kill.
 
 **`qs: command not found`.** `qs` must be the *same build* the shell runs.
 `home/caelestia.nix` pins it by mirroring `shell/nix/default.nix` exactly,
