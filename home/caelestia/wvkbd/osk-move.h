@@ -33,6 +33,11 @@ static bool osk_move_pending = false;
 static int32_t osk_drag_touch_id = -1;
 static int32_t osk_grab_x, osk_grab_y;
 
+#include <time.h>
+static double osk_now(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec * 1e3 + t.tv_nsec / 1e6; }
+static bool osk_debug(void) { static int d = -1; if (d < 0) d = getenv("WVKBD_DEBUG_MOVE") != NULL; return d; }
+static double osk_commit_t;
+
 static int32_t
 osk_free_w(void)
 {
@@ -76,6 +81,7 @@ osk_sync_done(void *data, struct wl_callback *cb, uint32_t serial)
 {
     wl_callback_destroy(cb);
     osk_move_pending = false;
+    if (osk_debug()) fprintf(stderr, "%.2f sync-done (+%.2f ms)\n", osk_now(), osk_now() - osk_commit_t);
 }
 
 static const struct wl_callback_listener osk_sync_listener = {
@@ -97,6 +103,7 @@ osk_drag_start(struct key *k, int32_t x, int32_t y, int32_t touch_id)
 static void
 osk_drag_motion(int32_t x, int32_t y)
 {
+    if (osk_debug()) fprintf(stderr, "%.2f motion %d,%d pending=%d\n", osk_now(), x, y, osk_move_pending);
     if (!osk_dragging || osk_move_pending || !osk_movable())
         return;
 
@@ -114,6 +121,8 @@ osk_drag_motion(int32_t x, int32_t y)
     wl_surface_commit(draw_surf.surf);
 
     osk_move_pending = true;
+    osk_commit_t = osk_now();
+    if (osk_debug()) fprintf(stderr, "%.2f commit margins %d,%d\n", osk_commit_t, left, top);
     wl_callback_add_listener(wl_display_sync(display), &osk_sync_listener, NULL);
 }
 
