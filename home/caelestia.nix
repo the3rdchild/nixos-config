@@ -683,11 +683,67 @@ import qs.modules.nexus.pages.display' \
   # listed at full size with a:0). keyboard.w has to be the narrower width
   # *before* the surface is created, and set_size/set_anchor follow it.
   # Capped below the available width so the compositor can grant exactly
-  # what was asked for. With one anchor, layer-shell centres the surface
-  # along the other axis, so this lands bottom-centre without any
-  # positioning code.
+  # what was asked for.
+  #
+  # ── ...and draggable: the move key beside Tab.
+  #
+  # A narrower keyboard is anchored TOP|LEFT and positioned by its margins,
+  # which is what lets it move at all - layer surfaces are never moved by
+  # the compositor. The drag logic lives in caelestia/wvkbd/osk-move.h
+  # (copied in and #included after main.c's globals); the substitutions here
+  # are only the hooks: a `Move` key type, the key itself in place of the
+  # half-width gap before Tab in both landscape layers, drag start/motion/end
+  # in the pointer and touch handlers, and WVKBD_POSITION to start where the
+  # last drag ended. Services/Osk.qml saves the position wvkbd prints on
+  # release. Default bottom-centre.
+  #
+  # One upstream fix rides along: the configure handler returned early for
+  # repeat configures without acking them. Margin changes can trigger such a
+  # configure, and an unacked one leaves later commits unapplied.
   wvkbdBelowShell = pkgs.wvkbd.overrideAttrs (old: {
     postPatch = (old.postPatch or "") + ''
+      # ── Rounded panel corners: WVKBD_RADIUS.
+      #
+      # Hyprland rounds windows but has no rounding rule for layer surfaces
+      # (HL.LayerRuleSpec), and wvkbd's -R only rounds individual keys - the
+      # panel background is a plain rectangle. So every drawing buffer gets a
+      # rounded-rectangle clip the moment its cairo context is created, before
+      # the cairo_save every draw call restores to. Nothing is ever painted
+      # outside it: the corners keep the zeroed shm memory, i.e. fully
+      # transparent, through key presses, redraws and resizes alike, and the
+      # corner keys are cut along the same curve. Antialiasing is on only
+      # while the clip is built (wvkbd draws everything else aliased), so the
+      # edge is smooth. The key-preview popup shares setup_buffer; its lower
+      # corners coincide with the panel's, so it gets the same treatment.
+      substituteInPlace drw.c \
+        --replace-fail \
+          '#include "math.h"' \
+          '#include "math.h"
+#include <stdlib.h>' \
+        --replace-fail \
+          '    cairo_set_antialias(drwbuf->cairo, CAIRO_ANTIALIAS_NONE);
+    drwbuf->layout = pango_cairo_create_layout(drwbuf->cairo);' \
+          '    {
+        const char *env_radius = getenv("WVKBD_RADIUS");
+        double r = env_radius ? atof(env_radius) : 0;
+        double cw = drwsurf->width / drwsurf->scale;
+        double ch = drwsurf->height / drwsurf->scale;
+        if (r > cw / 2) r = cw / 2;
+        if (r > ch / 2) r = ch / 2;
+        if (r > 0) {
+            cairo_set_antialias(drwbuf->cairo, CAIRO_ANTIALIAS_DEFAULT);
+            cairo_new_sub_path(drwbuf->cairo);
+            cairo_arc(drwbuf->cairo, cw - r, r, r, -M_PI / 2, 0);
+            cairo_arc(drwbuf->cairo, cw - r, ch - r, r, 0, M_PI / 2);
+            cairo_arc(drwbuf->cairo, r, ch - r, r, M_PI / 2, M_PI);
+            cairo_arc(drwbuf->cairo, r, r, r, M_PI, 3 * M_PI / 2);
+            cairo_close_path(drwbuf->cairo);
+            cairo_clip(drwbuf->cairo);
+        }
+    }
+    cairo_set_antialias(drwbuf->cairo, CAIRO_ANTIALIAS_NONE);
+    drwbuf->layout = pango_cairo_create_layout(drwbuf->cairo);'
+
       substituteInPlace main.c \
         --replace-fail ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY ZWLR_LAYER_SHELL_V1_LAYER_TOP \
         --replace-fail \
@@ -700,7 +756,8 @@ static uint32_t fixed_width = 0; /* WVKBD_WIDTH, see home/caelestia.nix */' \
           '    if ((tmp = getenv("WVKBD_LANDSCAPE_HEIGHT")))
         landscape_height = atoi(tmp);
     if ((tmp = getenv("WVKBD_WIDTH")) && atoi(tmp) > 0)
-        fixed_width = atoi(tmp);' \
+        fixed_width = atoi(tmp);
+    osk_parse_position(getenv("WVKBD_POSITION"));' \
         --replace-fail \
           '    keyboard.w = available_width;' \
           '    keyboard.w = (fixed_width && fixed_width < available_width)
@@ -712,11 +769,103 @@ static uint32_t fixed_width = 0; /* WVKBD_WIDTH, see home/caelestia.nix */' \
           '    if (keyboard.w != available_width) {
         zwlr_layer_surface_v1_set_size(layer_surface, keyboard.w, height);
         zwlr_layer_surface_v1_set_anchor(layer_surface,
-                                         ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM);
+                                         ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
+                                         ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT);
+        osk_place();
     } else {
         zwlr_layer_surface_v1_set_size(layer_surface, 0, height);
         zwlr_layer_surface_v1_set_anchor(layer_surface, anchor);
-    }'
+    }' \
+        --replace-fail \
+          'static bool hidden = false;' \
+          'static bool hidden = false;
+#include "osk-move.h"' \
+        --replace-fail \
+          '    // Swallow useless events
+    if (layer_surface_configured) {
+        return;
+    };' \
+          '    // Swallow useless events (acked, see home/caelestia.nix)
+    if (layer_surface_configured) {
+        zwlr_layer_surface_v1_ack_configure(surface, serial);
+        return;
+    };' \
+        --replace-fail \
+          '    if (cur_press) {
+        kbd_motion_key(&keyboard, time, cur_x, cur_y);
+    }' \
+          '    if (osk_dragging) {
+        osk_drag_motion(cur_x, cur_y);
+        return;
+    }
+
+    if (cur_press) {
+        kbd_motion_key(&keyboard, time, cur_x, cur_y);
+    }' \
+        --replace-fail \
+          '    cur_press = state == WL_POINTER_BUTTON_STATE_PRESSED;' \
+          '    cur_press = state == WL_POINTER_BUTTON_STATE_PRESSED;
+
+    if (!cur_press && osk_dragging) {
+        osk_drag_end();
+        return;
+    }' \
+        --replace-fail \
+          '        next_key = kbd_get_key(&keyboard, cur_x, cur_y);
+        if (next_key) {' \
+          '        next_key = kbd_get_key(&keyboard, cur_x, cur_y);
+        if (osk_drag_start(next_key, cur_x, cur_y, -1)) {
+            return;
+        } else if (next_key) {' \
+        --replace-fail \
+          '    next_key = kbd_get_key(&keyboard, touch_x, touch_y);
+    if (next_key) {' \
+          '    next_key = kbd_get_key(&keyboard, touch_x, touch_y);
+    if (osk_drag_start(next_key, touch_x, touch_y, id)) {
+        return;
+    } else if (next_key) {' \
+        --replace-fail \
+          '    kbd_release_key(&keyboard, time);
+}' \
+          '    if (osk_dragging && id == osk_drag_touch_id) {
+        osk_drag_end();
+        return;
+    }
+
+    kbd_release_key(&keyboard, time);
+}' \
+        --replace-fail \
+          '    kbd_motion_key(&keyboard, time, touch_x, touch_y);' \
+          '    if (osk_dragging) {
+        if (id == osk_drag_touch_id)
+            osk_drag_motion(touch_x, touch_y);
+        return;
+    }
+
+    kbd_motion_key(&keyboard, time, touch_x, touch_y);' \
+        --replace-fail \
+          '    layer_surface = NULL;
+    layer_surface_configured = false;' \
+          '    layer_surface = NULL;
+    layer_surface_configured = false;
+    osk_dragging = false;
+    osk_drag_touch_id = -1;'
+
+      cp ${./caelestia/wvkbd/osk-move.h} osk-move.h
+
+      substituteInPlace keyboard.h --replace-fail \
+        '	EndRow,    // Incidates the end of a key row' \
+        '	Move,      // Drags the keyboard (caelestia, osk-move.h)
+	EndRow,    // Incidates the end of a key row'
+
+      # The move key: U+F01BE, Nerd Fonts' Material "cursor-move" (fontconfig
+      # falls back to an installed Nerd Font from Rubik). Replaces the 0.5
+      # gap before Tab; --replace-fail substitutes both landscape layers.
+      substituteInPlace layout.mobintl.h --replace-fail \
+        '  {"", "", 0.5, Pad, .scheme = 1},
+  {"Tab", "Tab", 1.0, Code, KEY_TAB, .scheme = 1},' \
+        '  {"󰆾", "󰆾", 1.0, Move, .scheme = 1},
+  {"Tab", "Tab", 1.0, Code, KEY_TAB, .scheme = 1},'
     '';
   });
 
@@ -1137,7 +1286,20 @@ in {
       -- the keyboard behind caelestia-drawers and the bar can expand on hover
       -- without being covered. If it somehow lands the wrong way round after a
       -- Hyprland bump, flip the sign here — nothing else depends on it.
-      hl.layer_rule({ match = { namespace = "wvkbd" }, order = -1 })
+      --
+      -- blur: the keyboard is translucent (70 % background, 85 % keys; colours
+      -- in services/Osk.qml), and this frosts what shows through, using the
+      -- global decoration blur (size 4, 1 pass). ignore_alpha keeps the blur
+      -- out of the panel's transparent rounded corners - without it the blur
+      -- is sampled over the whole rectangular surface and the square corners
+      -- show. 0.3 sits under the 0.7 background, so the panel itself is always
+      -- blurred, and above the antialiased corner fringe.
+      hl.layer_rule({
+        match = { namespace = "wvkbd" },
+        order = -1,
+        blur = true,
+        ignore_alpha = 0.3,
+      })
 
       -- ── Kill the Hyprland splash text.
       --

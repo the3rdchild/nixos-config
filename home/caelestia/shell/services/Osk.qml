@@ -136,9 +136,9 @@ Singleton {
         // WVKBD_RADIUS is ours too: rounds all four corners of the panel by
         // clipping wvkbd's drawing buffers (see the same override). 23 px
         // matches Hyprland's window rounding. -R rounds the keys themselves.
-        command: ["wvkbd-mobintl", "-L", "250", "-H", "250", "--fn", "Rubik 20", "-R", "8", "--non-exclusive", ...root.colourArgs]
+        command: ["wvkbd-mobintl", "-L", "200", "-H", "200", "--fn", "Rubik 20", "-R", "8", "--non-exclusive", ...root.colourArgs]
         environment: ({
-                WVKBD_WIDTH: "1000",
+                WVKBD_WIDTH: "750",
                 WVKBD_RADIUS: "23",
                 WVKBD_POSITION: root.position
             })
