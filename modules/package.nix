@@ -4,6 +4,13 @@
   programs.hyprland = {
     enable = true;
     package = pkgs.hyprland;
+
+    # Only turns on programs.uwsm (the uwsm binary + its user units). The
+    # "Hyprland (uwsm-managed)" session entry itself ships in the Hyprland
+    # package, next to the plain one — but its TryExec is uwsm, so without
+    # this line the greeter hides it. The plain "Hyprland" entry stays as the
+    # rollback. See docs/uwsm-migration.md.
+    withUWSM = true;
   };
 
   # Feral GameMode — used by Heroic Games Launcher and ProtonPlus (e.g. STRINOVA)

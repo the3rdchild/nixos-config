@@ -1,10 +1,12 @@
 # Hyprland → UWSM
 
-**Status: planned, not applied.** This is the assessment and step list for
-moving the Hyprland session from a plain SDDM launch to
-[UWSM](https://github.com/Vladimir-csp/uwsm) (Universal Wayland Session
-Manager). Nothing in the tree uses UWSM yet; when a step lands, update this
-document instead of leaving it describing the old state.
+**Status: Tier 1 and 2.1 applied, login not yet verified.** This is the
+assessment and step list for moving the Hyprland session from a plain SDDM
+launch to [UWSM](https://github.com/Vladimir-csp/uwsm) (Universal Wayland
+Session Manager). `withUWSM`, the `hyprland-uwsm` default session and the
+`uwsm/env*` files are in the tree; the Tier 1 verify list below has not been
+run yet. 2.2–2.4 are still open. When a step lands, update this document
+instead of leaving it describing the old state.
 
 Related: [`caelestia.md`](caelestia.md) for how the desktop is wired together.
 
@@ -29,7 +31,7 @@ UWSM runs the compositor as a systemd user unit and brings up the standard
 targets (`graphical-session-pre.target`, `graphical-session.target`,
 `wayland-session@Hyprland.target`). What this machine gets from that:
 
-| Today | With UWSM |
+| Plain "Hyprland" session (before, and the fallback) | With UWSM |
 |---|---|
 | `graphical-session.target` is `inactive`. Anything bound to it never starts, which is why `kde-color-sync` and `gtk-theme-sync` hang off `default.target`. | The target is reached. Home-manager services with a `graphical-session` default work unchanged. |
 | Autostart is `hl.exec_cmd` in `execs.lua`. A crash stays dead, and output goes nowhere. | Autostart can be user units with `Restart=`, ordering, and logs in `journalctl --user`. |
@@ -42,9 +44,9 @@ targets (`graphical-session-pre.target`, `graphical-session.target`,
 
 | Piece | Where | Notes |
 |---|---|---|
-| Hyprland enabled | `modules/package.nix` | `programs.hyprland.enable = true`, no `withUWSM`. Hyprland 0.56.0 (Lua config). |
-| Default session | `modules/sddm.nix` | `services.displayManager.defaultSession = "hyprland"`. SilentSDDM greeter. |
-| Environment | dots `hypr/hyprland/env.lua` | `hl.env` for Qt/GDK/SDL/Electron backends, `XCURSOR_*`, `XDG_*`. `QT_QPA_PLATFORMTHEME` is patched to `kde` in `home/caelestia.nix`. |
+| Hyprland enabled | `modules/package.nix` | `programs.hyprland.enable = true`, `withUWSM = true`. Hyprland 0.56.0 (Lua config), uwsm 0.26.6. D-Bus was already `broker`, which `programs.uwsm` forces, so that part is a no-op. |
+| Default session | `modules/sddm.nix` | `services.displayManager.defaultSession = "hyprland-uwsm"`. SilentSDDM greeter. |
+| Environment | dots `hypr/hyprland/env.lua` + `uwsm/env`, `uwsm/env-hyprland` (`home/caelestia.nix`) | `hl.env` for Qt/GDK/SDL/Electron backends, `XCURSOR_*`, `XDG_*`. `QT_QPA_PLATFORMTHEME` is patched to `kde` in `home/caelestia.nix`. The uwsm files carry the same values (minus `XDG_*`) for the systemd activation environment; see 2.1. |
 | Autostart | dots `hypr/hyprland/execs.lua` | On `hyprland.start`: gnome-keyring (secrets), polkit-gnome agent, 2× `wl-paste --watch cliphist store`, `trash-empty 30`, `hyprctl setcursor` + 2× `gsettings` cursor, geoclue demo agent, `mpris-proxy`, `caelestia shell -d`. gammastep is patched out. |
 | Shell service | `home/caelestia.nix` | `programs.caelestia.systemd.enable = false` — otherwise it would run a second shell next to the one `execs.lua` starts. |
 | Session-mode daemons | `home/qt.nix`, `home/themes.nix` | `kde-color-sync`, `gtk-theme-sync`: `WantedBy = default.target`, with comments explaining that the graphical target is never reached. |
@@ -53,7 +55,7 @@ targets (`graphical-session-pre.target`, `graphical-session.target`,
 
 ---
 
-## Tier 1 — switch the session (~30 min)
+## Tier 1 — switch the session (~30 min) — applied, not verified
 
 ```nix
 # modules/package.nix
@@ -67,10 +69,19 @@ programs.hyprland = {
 services.displayManager.defaultSession = "hyprland-uwsm";
 ```
 
-`withUWSM` enables `programs.uwsm`, which adds a `hyprland-uwsm` session
-("Hyprland (UWSM)", running `uwsm start -F -- /run/current-system/sw/bin/Hyprland`).
-The Hyprland module still registers its own session package, so the plain
-**Hyprland** entry stays in the greeter as the rollback.
+Where the session entry comes from is easy to get wrong:
+
+- The Hyprland **package** ships both `hyprland.desktop` and
+  `hyprland-uwsm.desktop` (`providedSessions = [ "hyprland" "hyprland-uwsm" ]`).
+  The UWSM one is named **"Hyprland (uwsm-managed)"** and runs
+  `uwsm start -e -D Hyprland hyprland.desktop`, so the compositor is still
+  launched through `hyprland.desktop`'s `start-hyprland`.
+- `withUWSM` only sets `programs.uwsm.enable`: the uwsm binary, its user units
+  (`wayland-wm@`, `wayland-session-bindpid@`, …) and D-Bus broker. It does
+  **not** add a session of its own (`programs.uwsm.waylandCompositors` stays
+  empty). What it does matter for: `hyprland-uwsm.desktop` has
+  `TryExec=uwsm`, so without it the greeter hides that entry.
+- The plain **Hyprland** entry stays in the greeter as the rollback.
 
 Nothing else has to change for this tier: `execs.lua` still runs, `env.lua`
 still applies to everything Hyprland starts, and the two theme daemons still
@@ -80,12 +91,12 @@ start from `default.target`.
 
 ```fish
 sudo nixos-rebuild switch --flake /mnt/doc/config#noouoops
-# log out, pick "Hyprland (UWSM)" in SilentSDDM, log in
+# log out, pick "Hyprland (uwsm-managed)" in SilentSDDM, log in
 
 systemctl --user is-active graphical-session.target   # expect: active
 systemctl --user status 'wayland-wm@*'                 # the compositor unit
 uwsm check is-active && echo ok
-systemctl --user show-environment | grep -E 'WAYLAND_DISPLAY|XDG_CURRENT_DESKTOP|QT_QPA'
+systemctl --user show-environment | grep -E 'WAYLAND_DISPLAY|XDG_CURRENT_DESKTOP|QT_QPA|XCURSOR'
 ```
 
 Then test the things most likely to break:
@@ -108,7 +119,7 @@ Then test the things most likely to break:
 
 ## Tier 2 — use it properly (half a day to a day)
 
-### 2.1 Environment variables → UWSM env files
+### 2.1 Environment variables → UWSM env files — applied, not verified
 
 Under UWSM, `hl.env` only reaches processes Hyprland spawns. Units in the user
 manager (portals, D-Bus-activated apps, anything from 2.2) get the systemd
@@ -116,35 +127,43 @@ activation environment instead, which UWSM builds from its env files. A
 variable that exists only in `env.lua` shows up as Qt/cursor theming that is
 right in some apps and wrong in others.
 
-Move them into home-manager:
+Now in `home/caelestia.nix`, next to `caelestia/hypr-vars.lua`:
 
 ```nix
-xdg.configFile."uwsm/env".text = ''
+"uwsm/env".text = ''
   export QT_QPA_PLATFORMTHEME=kde
   export QT_WAYLAND_DISABLE_WINDOWDECORATION=1
   export QT_AUTO_SCREEN_SCALE_FACTOR=1
   export GDK_BACKEND=wayland,x11
-  export QT_QPA_PLATFORM="wayland;xcb"
-  export SDL_VIDEODRIVER=wayland,x11
+  export QT_QPA_PLATFORM='wayland;xcb'
+  export SDL_VIDEODRIVER=wayland,x11,windows
   export CLUTTER_BACKEND=wayland
   export ELECTRON_OZONE_PLATFORM_HINT=auto
   export _JAVA_AWT_WM_NONREPARENTING=1
 '';
 
-xdg.configFile."uwsm/env-hyprland".text = ''
-  export XCURSOR_THEME=...   # same value as vars.cursorTheme
-  export XCURSOR_SIZE=...
+"uwsm/env-hyprland".text = ''
+  export XCURSOR_THEME=${lib.escapeShellArg config.themes.activeCursor}
+  export XCURSOR_SIZE=${toString cursorSize}
 '';
 ```
 
+- uwsm sources `uwsm/env` for every session, then `uwsm/env-<name>` for each
+  desktop name, lowercased (`libexec/uwsm/prepare-env.sh`). Both run as POSIX
+  `sh`, after `/etc/profile`, so `environment.sessionVariables` still arrive.
+- Values mirror `env.lua` exactly, including upstream's
+  `SDL_VIDEODRIVER=wayland,x11,windows`. Two different values would make an
+  app's environment depend on who launched it.
 - `XDG_CURRENT_DESKTOP` / `XDG_SESSION_TYPE` / `XDG_SESSION_DESKTOP` are set
-  by UWSM from the session; don't set them again.
-- The cursor values come from caelestia's `variables.lua` and
-  `caelestia/hypr-vars.lua` (managed in `home/caelestia.nix`). Take them from
-  the same Nix value so the two don't drift apart.
-- Leaving `env.lua` as it is causes no harm (same values, set twice). Once the
-  UWSM files are confirmed working, the `QT_QPA_PLATFORMTHEME` patch in
+  by UWSM from the session; they are deliberately not in the files.
+- The cursor theme is the same `config.themes.activeCursor` that
+  `hypr-vars.lua` uses, and the size is a shared `cursorSize` binding in the
+  file's `let` block, so the two can't drift apart. uwsm's hyprland plugin
+  already marks `XCURSOR_THEME`/`XCURSOR_SIZE` for export on finalize.
+- `env.lua` is left as it is (same values, set twice). **Still open:** once a
+  UWSM login is confirmed, the `QT_QPA_PLATFORMTHEME` patch in
   `home/caelestia.nix` can go, which takes one `--replace-fail` off the dots.
+  Not before: the plain fallback session reads only `env.lua`.
 
 Check with `systemctl --user show-environment` after login.
 
@@ -159,7 +178,7 @@ Each `execs.lua` entry, and the unit that could replace it:
 | 2× `wl-paste --watch cliphist store` | `services.cliphist` (HM), `allowImages = true` | Target defaults to `wayland.systemd.target` (graphical-session). |
 | `mpris-proxy` | `services.mpris-proxy` (HM) | Bound to the user `bluetooth.target`, not the session — starts when a BT device connects. |
 | geoclue demo agent | small custom user unit | Only useful if gammastep comes back. It could simply be dropped. |
-| `caelestia shell -d` | `programs.caelestia.systemd.enable = true` | Target defaults to `wayland.systemd.target`. **Must** be removed from `execs.lua` at the same time, or two shells run (see the comment in `home/caelestia.nix`). The CTRL+SUPER+SHIFT+R restart bind in `keybinds.lua` should become `systemctl --user restart caelestia`. |
+| `caelestia shell -d` | `programs.caelestia.systemd.enable = true` | Target defaults to `wayland.systemd.target`. **Must** be removed from `execs.lua` at the same time, or two shells run (see the comment in `home/caelestia.nix`). `keybinds.lua` starts the shell in **three** places, and all of them need patching: CTRL+SUPER+SHIFT+R (`qs -c caelestia kill`, kill only), CTRL+SUPER+ALT+R (kill, then `caelestia shell -d`) and `kbRestoreLock` (`caelestia shell -d`, then lock). `kbRestoreLock` matters most: it is the way back when the shell crashes while locked, and left alone it would start a second shell outside the unit. Check the unit's `Restart=` against the kill-only bind too. |
 | `trash-empty 30` | user timer, or leave in `execs.lua` | One-shot; nothing to supervise. |
 | `hyprctl setcursor` + `gsettings` cursor | leave in `execs.lua` | Needs the running compositor; cheap and idempotent. |
 
@@ -191,9 +210,16 @@ live in the compositor unit's cgroup and outside the `app-*.scope` drop-ins in
 
 - Replace the `systemd-run --user --scope …` wrapper on the SUPER+SHIFT+V bind
   (`home/caelestia.nix`) and in `home/mime.nix` with `uwsm app -- code`.
-  This is shorter, but the scope name changes, so check that the
-  `app-code-` drop-in still matches with
-  `systemctl --user show <scope> -p DropInPaths`.
+  This is shorter, but **the `app-code-` drop-in stops matching**. uwsm names
+  scopes `app-<first XDG_CURRENT_DESKTOP>-<cmd>-<8 hex>.scope` (services use
+  `@<hex>` instead) and puts them in `app-graphical.slice` by default. Here
+  that gives `app-Hyprland-code-1a2b3c4d.scope`, whose prefix drop-ins are
+  `app-Hyprland-code-.scope.d`, `app-Hyprland-.scope.d` and `app-.scope.d`.
+  So the drop-in in `home/app-limits.nix` has to be renamed along with the
+  wrapper. Otherwise the memory cap silently stops applying. Confirm with
+  `systemctl --user show <scope> -p DropInPaths`. The same goes for any app
+  that gets launched through `uwsm app` (Zen's `app-flatpak-…` drop-in
+  included).
 - Patching the launcher in `Apps.qml` to exec `app2unit -- <id>` would cover
   every app, but it's another shell patch against a pinned release tag. Decide
   once 2.1–2.3 are done.
@@ -214,8 +240,10 @@ live in the compositor unit's cgroup and outside the `app-*.scope` drop-ins in
 
 ## Checklist
 
-- [ ] Tier 1: `withUWSM` + `defaultSession`, rebuild, run the verify list
-- [ ] 2.1: `uwsm/env` + `uwsm/env-hyprland`; drop the `QT_QPA_PLATFORMTHEME` dots patch
+- [x] Tier 1: `withUWSM` + `defaultSession` in the tree
+- [ ] Tier 1: `nixos-rebuild switch`, log into "Hyprland (uwsm-managed)", run the verify list
+- [x] 2.1: `uwsm/env` + `uwsm/env-hyprland`
+- [ ] 2.1: after a verified UWSM login, drop the `QT_QPA_PLATFORMTHEME` dots patch
 - [ ] 2.3: retarget or re-comment `kde-color-sync` / `gtk-theme-sync`
 - [ ] 2.2: shell, polkit and cliphist as units; patch `execs.lua` + restart bind
 - [ ] 2.4: `uwsm app --` for the code bind / mime entry; decide on the launcher

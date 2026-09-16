@@ -427,6 +427,10 @@ import qs.modules.nexus.pages.display' \
         --replace-fail ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY ZWLR_LAYER_SHELL_V1_LAYER_TOP
     '';
   });
+
+  # Read by both hypr-vars.lua (-> env.lua's XCURSOR_SIZE and the execs.lua
+  # setcursor/gsettings calls) and uwsm/env-hyprland, so the two can't drift.
+  cursorSize = 24;
 in {
   imports = [ inputs.caelestia-shell.homeManagerModules.default ];
 
@@ -474,7 +478,7 @@ in {
           -- Kept in sync with themes.active (see home/themes.nix); upstream
           -- defaults to sweet-cursors, which isn't in nixpkgs.
           cursorTheme  = "${config.themes.activeCursor}",
-          cursorSize   = 24,
+          cursorSize   = ${toString cursorSize},
 
           -- rules.lua widens gaps_out to singleWindowGapsOut on a normal
           -- workspace holding one window (w[tv1]s[false] / f[1]s[false]), so a
@@ -526,6 +530,46 @@ in {
           -- washed-out session has something to compare against.
           blurEnabled   = true,
       }
+    '';
+
+    # ── Session environment under UWSM.
+    #
+    # env.lua's hl.env only reaches processes Hyprland itself spawns. Under
+    # UWSM, everything the user manager starts — portals, D-Bus-activated apps,
+    # user units — gets the systemd activation environment instead, which uwsm
+    # builds by sourcing these files (as POSIX sh) before the compositor starts.
+    # A variable left only in env.lua shows up as theming that is right in some
+    # apps and wrong in others.
+    #
+    # `env` is loaded for every UWSM session, `env-hyprland` only when
+    # "Hyprland" is in the session's desktop names (lowercased by uwsm).
+    #
+    # Values mirror the dots' env.lua exactly, including upstream's
+    # SDL_VIDEODRIVER list and the `kde` platform theme patched in above —
+    # two different values would make an app's theme depend on who launched
+    # it. env.lua is left as is: same values, set twice, no harm.
+    #
+    # XDG_CURRENT_DESKTOP / XDG_SESSION_TYPE / XDG_SESSION_DESKTOP are not
+    # here on purpose; uwsm derives them from the session entry.
+    #
+    # Only read by uwsm, so the plain "Hyprland" fallback session is unaffected.
+    "uwsm/env".text = ''
+      export QT_QPA_PLATFORMTHEME=kde
+      export QT_WAYLAND_DISABLE_WINDOWDECORATION=1
+      export QT_AUTO_SCREEN_SCALE_FACTOR=1
+      export GDK_BACKEND=wayland,x11
+      export QT_QPA_PLATFORM='wayland;xcb'
+      export SDL_VIDEODRIVER=wayland,x11,windows
+      export CLUTTER_BACKEND=wayland
+      export ELECTRON_OZONE_PLATFORM_HINT=auto
+      export _JAVA_AWT_WM_NONREPARENTING=1
+    '';
+
+    # uwsm's hyprland plugin already marks XCURSOR_THEME/XCURSOR_SIZE for
+    # export on finalize, so these reach the user manager too.
+    "uwsm/env-hyprland".text = ''
+      export XCURSOR_THEME=${lib.escapeShellArg config.themes.activeCursor}
+      export XCURSOR_SIZE=${toString cursorSize}
     '';
 
     # Sourced by caelestia's fish config for machine-local additions. Our

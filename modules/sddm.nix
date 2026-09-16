@@ -50,7 +50,11 @@
   #
   # "kwin" here means the kwin_wayland binary alone, not a Plasma session —
   # roughly one package, against the ~35 the desktop manager pulled in.
-  services.displayManager.defaultSession = "hyprland";
+  #
+  # hyprland-uwsm, not hyprland: the compositor runs as a systemd user unit
+  # under UWSM, so graphical-session.target is actually reached (withUWSM in
+  # ./package.nix). "Hyprland" is still listed in the greeter as the fallback.
+  services.displayManager.defaultSession = "hyprland-uwsm";
 
   services.displayManager.sddm = {
     autoNumlock = true;
