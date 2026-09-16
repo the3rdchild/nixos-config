@@ -104,4 +104,14 @@
     enable = true;
     package = pkgs.jdk17;
   };
+
+  # The SDK is the stable release tarball unpacked to ~/flutter-sdk — one of
+  # the paths the Dart-Code extension probes on its own. Its `git clone` of
+  # the full history kept dropping mid-fetch. PATH makes flutter/dart usable
+  # from a terminal too; ANDROID_HOME points Gradle and `flutter doctor` at
+  # the writable SDK.
+  environment.sessionVariables.ANDROID_HOME = "$HOME/Android/Sdk";
+  environment.extraInit = ''
+    export PATH="$HOME/flutter-sdk/bin:$PATH"
+  '';
 }
