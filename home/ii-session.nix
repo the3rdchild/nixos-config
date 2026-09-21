@@ -283,6 +283,10 @@ ACTIVATE
     "gtk-4.0/gtk.css"
   ];
 
+  # Paths that stay one definition across both sessions. The comment on
+  # home.file says why these three and nothing else.
+  sharedFromSessionA = [ "git" "menus" "mimeapps.list" ];
+
   # The tree minus the mutable paths — this is what gets symlinked.
   linked = pkgs.runCommand "illogical-impulse-linked" { } ''
     cp -r ${dots}/.config $out
@@ -308,10 +312,44 @@ in {
   # plain directory source symlinks the whole tree read-only, and then nothing
   # can create hypr/custom/*.lua or illogical-impulse/config.json at runtime.
   # recursive makes real directories and symlinks the files individually.
-  home.file.${cfgDirName} = {
-    source = linked;
-    recursive = true;
-  };
+
+  # ── Tooling that both sessions must agree on.
+  #
+  # Session B reads ~/.config-ii, so everything home-manager writes into
+  # ~/.config is invisible here. For the dots that is the point — ii ships its
+  # own fish, kitty, foot, fontconfig, gtk-3.0 and starship.toml, and the
+  # caelestia/uwsm/systemd entries are session A's business. But three of them
+  # are not look-and-feel, and losing them breaks work rather than changing
+  # appearance:
+  #
+  #   git            without ~/.config/git/config the only thing left is a
+  #                  stale unmanaged ~/.gitconfig whose key is misspelled
+  #                  `user.mail`, so git sees no address and refuses to commit
+  #                  at all ("Author identity unknown"). It also drops
+  #                  ../home/git.nix's url."git@github.com:".insteadOf, which
+  #                  is the only reason pushes to an https remote go over SSH.
+  #   mimeapps.list  default application for every file type
+  #   menus          menus/applications.menu, from ../home/mime.nix
+  #
+  # mkOutOfStoreSymlink rather than copying the same source into both trees:
+  # this points at the live ~/.config path, so whatever home-manager generates
+  # for session A is what session B reads, with no second definition that can
+  # drift. Nothing writes to any of the three — in session A they are already
+  # read-only store symlinks — so the indirection costs nothing.
+
+  home.file =
+    {
+      ${cfgDirName} = {
+        source = linked;
+        recursive = true;
+      };
+    }
+    # The three shared paths, linked at their live ~/.config location.
+    // lib.listToAttrs (map (name:
+      lib.nameValuePair "${cfgDirName}/${name}" {
+        source = config.lib.file.mkOutOfStoreSymlink
+          "${config.home.homeDirectory}/.config/${name}";
+      }) sharedFromSessionA);
 
   # ── Seed-once copies of everything written at runtime.
   home.activation.iiSessionMutableConfigs =
