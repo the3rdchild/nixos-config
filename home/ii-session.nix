@@ -129,6 +129,122 @@ ACTIVATE
     notify-send "Screenshot saved" "$f" -a Screenshot -i image-x-generic
   '';
 
+  # ── Restarting the shell.
+  #
+  # Upstream's bind is `killall ydotool qs quickshell; qs -c $qsConfig &`, and
+  # on NixOS the kill half is a no-op: wrapQtAppsHook renames the process, so
+  # /proc/<pid>/comm reads `.quickshell-wra` and killall — which matches on
+  # comm — finds neither `qs` nor `quickshell`. The start half still runs, so
+  # every press of CTRL+SUPER+R left the old instance alive and added another
+  # one: two bars, then three. Upstream knows about this; it is an open TODO in
+  # their own sdata/dist-nix/README.md ("should be .quickshell-wra and
+  # .Hyprland-wrapp when installed via Nix").
+  #
+  # `qs kill` is quickshell's own subcommand and the right answer here. Unlike
+  # the caelestia session — where `qs -c caelestia kill` could never work
+  # because that shell runs from a store path — these configs really do live at
+  # $XDG_CONFIG_HOME/quickshell/<name>, so -c resolves. pkill on the full
+  # command line stays as a backstop for an instance that is too wedged to
+  # answer its IPC socket.
+  shellRestart = pkgs.writeShellScript "ii-shell-restart" ''
+    export PATH=${lib.makeBinPath [ pkgs.procps pkgs.psmisc pkgs.coreutils ]}:$PATH
+    cfg="''${qsConfig:-${qsConfig}}"
+    killall ydotool 2>/dev/null || true
+
+    # `qs kill` terminates ONE instance per call — it prints "Killed <id>" and
+    # returns, leaving any others running. Looping matters because the whole
+    # reason this script exists is that duplicates accumulate.
+    for _ in 1 2 3 4 5; do
+      pgrep -f 'bin/quickshell -c' >/dev/null 2>&1 || break
+      qs -c "$cfg" kill >/dev/null 2>&1 || break
+    done
+
+    # Backstop for an instance too wedged to answer its IPC socket. The pattern
+    # cannot match this script: its own cmdline is the store path below.
+    pkill -f 'bin/quickshell -c' 2>/dev/null || true
+
+    # Wait for them to actually exit. Starting the replacement while the old
+    # one still holds its layer surfaces is how you get two bars for a moment,
+    # and if the old one then fails to exit, permanently.
+    for _ in $(seq 1 50); do
+      pgrep -f 'bin/quickshell -c' >/dev/null 2>&1 || break
+      sleep 0.1
+    done
+
+    exec qs -c "$cfg" -d
+  '';
+
+  # ── Automatic light/dark from the wallpaper.
+  #
+  # These dots never look at the wallpaper to decide light or dark. The mode
+  # comes from gsettings and nothing else (switchwall.sh, the
+  # `if [[ -z "$mode_flag" ]]` branch), which is why a white wallpaper still
+  # renders a dark palette — matugen is handed --mode dark and derives a dark
+  # scheme from that image's hues. Picking an accent colour does not change it
+  # either; --color only passes the colour through to matugen.
+  #
+  # This replaces that branch. The decision still lands in the same variable,
+  # so it flows on into `pre_process "$mode_flag"` further down, which is what
+  # writes org.gnome.desktop.interface color-scheme and gtk-theme — so the
+  # portal, GTK, Qt and session A all follow without any extra plumbing.
+  #
+  # On by default, off by one command, because a luminance threshold is always
+  # wrong for some images and you will want to override it. An explicit
+  # --mode still wins: the Settings light/dark buttons keep working as a
+  # one-off, and the next wallpaper change re-derives.
+  autoLightDarkThreshold = "0.5";
+
+  autoLightDark = pkgs.writeShellScript "ii-auto-lightdark" ''
+    export PATH=${lib.makeBinPath [ pkgs.imagemagick pkgs.glib pkgs.gawk pkgs.coreutils ]}
+    flag="''${XDG_CONFIG_HOME:-$HOME/.config}/illogical-impulse/auto-lightdark"
+
+    # Upstream's own rule, kept verbatim as the fallback.
+    from_gsettings() {
+      case "$(gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null | tr -d "'")" in
+        prefer-dark) echo dark ;;
+        *)           echo light ;;
+      esac
+    }
+
+    # Missing flag file means on.
+    [ "$(cat "$flag" 2>/dev/null)" = "0" ] && { from_gsettings; exit 0; }
+
+    img="$1"
+    [ -n "$img" ] && [ -f "$img" ] || { from_gsettings; exit 0; }
+    case "$img" in
+      *.mp4|*.webm|*.mkv|*.avi|*.mov|*.MP4|*.WEBM|*.MKV|*.AVI|*.MOV)
+        from_gsettings; exit 0 ;;
+    esac
+
+    # Mean of the image collapsed to one grey pixel: 0 is black, 1 is white.
+    mean="$(magick "$img" -colorspace Gray -resize 1x1! -format '%[fx:mean]' info: 2>/dev/null)"
+    [ -n "$mean" ] || { from_gsettings; exit 0; }
+    awk -v m="$mean" -v t="${autoLightDarkThreshold}" 'BEGIN { print (m > t) ? "light" : "dark" }'
+  '';
+
+  autoLightDarkCtl = pkgs.writeShellScriptBin "ii-lightdark-auto" ''
+    export PATH=${lib.makeBinPath [ pkgs.jq pkgs.coreutils ]}
+    cfgdir="''${XDG_CONFIG_HOME:-$HOME/.config}/illogical-impulse"
+    flag="$cfgdir/auto-lightdark"
+    state() { [ "$(cat "$flag" 2>/dev/null)" = "0" ] && echo off || echo on; }
+
+    case "''${1:-status}" in
+      status) echo "auto light/dark: $(state)" ;;
+      on|off)
+        mkdir -p "$cfgdir"
+        [ "$1" = "on" ] && echo 1 > "$flag" || echo 0 > "$flag"
+        echo "auto light/dark: $(state)"
+        # Re-derive straight away for the wallpaper that is already set.
+        if [ "$1" = "on" ]; then
+          wp="$(jq -r '.background.wallpaperPath // empty' "$cfgdir/config.json" 2>/dev/null)"
+          [ -n "$wp" ] && exec "''${XDG_CONFIG_HOME:-$HOME/.config}/quickshell/${qsConfig}/scripts/colors/switchwall.sh" --noswitch --image "$wp"
+        fi
+        ;;
+      toggle) [ "$(state)" = "on" ] && exec "$0" off || exec "$0" on ;;
+      *) echo "usage: ii-lightdark-auto [status|on|off|toggle]" >&2; exit 2 ;;
+    esac
+  '';
+
   # ── The merged, patched config tree.
   #
   # ii supplies the whole install (hypr config, scripts, matugen templates, the
@@ -276,6 +392,73 @@ ACTIVATE
         'mkdir -p $(xdg-user-dir PICTURES)/Screenshots && ' \
         'mkdir -p ${screenshotDir} && '
 
+    # ── Light/dark follows the wallpaper (see autoLightDark above).
+    #
+    # Applied to both shells: each carries its own copy of switchwall.sh.
+    for f in $out/.config/quickshell/*/scripts/colors/switchwall.sh; do
+      [ -e "$f" ] || continue
+      substituteInPlace "$f" \
+        --replace-fail \
+          'current_mode=$(gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null | tr -d "'"'"'")' \
+          'current_mode="$(${autoLightDark} "$imgpath")"' \
+        --replace-fail \
+          'if [[ "$current_mode" == "prefer-dark" ]]; then' \
+          'if [[ "$current_mode" == "dark" ]]; then'
+    done
+
+    # ── Clipboard: picking an entry pastes it.
+    #
+    # Two upstream problems. Cliphist.paste() exists but its classic-cliphist
+    # branch ends in `wl-copy && wl-paste`, and wl-paste only prints the
+    # clipboard to stdout — it does not press anything; the Stash branch right
+    # below it correctly runs pressPasteCommand. And the launcher's clipboard
+    # entries call copy(), never paste(), so selecting one left you to hit
+    # Ctrl+V yourself.
+    #
+    # pressPasteCommand is `ydotool key -d 1 29:1 47:1 47:0 29:0` — Ctrl down,
+    # V down, V up, Ctrl up. Being a keystroke rather than a data transfer, it
+    # is format-agnostic: images and anything else the clipboard holds paste
+    # the same way. ydotoold is already running (programs.ydotool.enable in
+    # ../modules/hyprland-desktop.nix) and the user is in the ydotool group.
+    #
+    # Only the entry's primary action changes. The explicit "Copy" action next
+    # to it stays copy-only, which is the whole point of having it.
+    for f in $out/.config/quickshell/*/services/Cliphist.qml; do
+      [ -e "$f" ] || continue
+      substituteInPlace "$f" --replace-fail \
+        'decode | wl-copy && wl-paste`]);' \
+        'decode | wl-copy && sleep ''${root.pasteDelay} && ''${root.pressPasteCommand}`]);'
+    done
+
+    # Only the entry's primary action — the first of the two Cliphist.copy
+    # calls in the file. The second is the explicit "Copy" action listed beside
+    # it, which must stay copy-only; that is the whole point of having it.
+    #
+    # `0,/re/s//x/` replaces the first match and nothing else. A multi-line
+    # --replace-fail anchor was the obvious alternative and does not work here:
+    # Nix strips the common indentation from a multi-line string, so the
+    # anchor's continuation lines arrive four spaces short of the file's.
+    for f in $out/.config/quickshell/*/services/LauncherSearch.qml; do
+      [ -e "$f" ] || continue
+      before=$(grep -c 'Cliphist\.copy(entry);' "$f")
+      [ "$before" = "2" ] || { echo "LauncherSearch.qml: expected 2 Cliphist.copy call sites, found $before" >&2; exit 1; }
+      sed -i '0,/Cliphist\.copy(entry);/s//Cliphist.paste(entry);/' "$f"
+      grep -q 'Cliphist\.paste(entry);' "$f"
+      [ "$(grep -c 'Cliphist\.copy(entry);' "$f")" = "1" ] || exit 1
+    done
+
+    # ── Shell restart (see shellRestart above).
+    substituteInPlace $out/.config/hypr/hyprland/keybinds.lua \
+      --replace-fail \
+        'hl.dsp.exec_cmd("killall ydotool qs quickshell; qs -c $qsConfig &")' \
+        'hl.dsp.exec_cmd("${shellRestart}")'
+
+    # The About page restarts the shell the same broken way.
+    for f in $out/.config/quickshell/*/modules/ii/settings/pages/About.qml; do
+      [ -e "$f" ] || continue
+      sed -i 's|killall qs 2>/dev/null \|\| true|qs kill 2>/dev/null \|\| pkill -f '"'"'quickshell -c'"'"' 2>/dev/null \|\| true|' "$f"
+    done
+
     # ── The config root rewrite. Must be last: it rewrites the line added above
     # along with everything else.
     #
@@ -353,6 +536,7 @@ ACTIVATE
 
     "hypr/custom"
     "hypr/hypridle.conf"
+    "hypr/hyprlock.conf"
     "hypr/hyprland/shellOverrides"
     "hypr/hyprland/colors.lua"
     "hypr/hyprlock/colors.conf"
@@ -479,6 +663,7 @@ in {
   # the shell degrades to nothing), breeze-plus, qt6-avif-image-plugin.
   home.packages = with pkgs; [
     venv
+    autoLightDarkCtl # `ii-lightdark-auto [status|on|off|toggle]`
 
     # No fonts here on purpose — they are system-wide in
     # ../modules/ii-session.nix. home-manager advertises profile fonts through
