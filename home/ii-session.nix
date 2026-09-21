@@ -285,7 +285,7 @@ ACTIVATE
 
   # Paths that stay one definition across both sessions. The comment on
   # home.file says why these three and nothing else.
-  sharedFromSessionA = [ "git" "menus" "mimeapps.list" ];
+  sharedFromSessionA = [ "git" "menus" "mimeapps.list" "dconf" ];
 
   # The tree minus the mutable paths — this is what gets symlinked.
   linked = pkgs.runCommand "illogical-impulse-linked" { } ''
@@ -330,6 +330,28 @@ in {
   #                  is the only reason pushes to an https remote go over SSH.
   #   mimeapps.list  default application for every file type
   #   menus          menus/applications.menu, from ../home/mime.nix
+  #   dconf          light/dark mode and the GTK theme, for BOTH sessions
+  #
+  # dconf is the one that actually broke something visible. Session B started
+  # with no ~/.config-ii/dconf/user at all, so `gsettings get
+  # org.gnome.desktop.interface color-scheme` answered 'default', the portal
+  # reported color-scheme = 0 ("no preference") to every client, and all GTK
+  # and Qt apps rendered light while the shell stayed on its last matugen
+  # palette. The shell reads the same key as its source of truth
+  # (scripts/colors/switchwall.sh, the `if [[ -z "$mode_flag" ]]` branch), so
+  # it computed "light" too and the two disagreed about what it had computed.
+  #
+  # Sharing it also fixes a worse, non-deterministic half: dconf reads and
+  # writes both go through a D-Bus-activated service, and ii's execs.lua runs
+  # `dbus-update-activation-environment --all`, so which database that service
+  # ends up bound to depends on whether it was activated before or after that
+  # line ran. With one database the race stops mattering.
+  #
+  # The deliberate consequence: light/dark and the GTK theme are now one
+  # setting for the whole user. Changing the wallpaper in ii retints session A
+  # as well — ../home/qt.nix and ../home/themes.nix watch these very keys and
+  # will follow. That is what was asked for, and it is the honest model
+  # anyway: light/dark is a property of the person, not of the dotfiles.
   #
   # mkOutOfStoreSymlink rather than copying the same source into both trees:
   # this points at the live ~/.config path, so whatever home-manager generates
@@ -414,6 +436,14 @@ in {
     tesseract
 
     # Basic tools the scripts assume.
+    #
+    # grim and jq are not optional: the Print bind is
+    # `grim -o "$(hyprctl activeworkspace -j | jq -r '.monitor')" - | wl-copy`
+    # (keybinds.lua:95-96) and the OCR fallback shells out to grim too, so
+    # without them the screenshot keys fail silently. gojq below is a
+    # different binary name and does not satisfy `jq`.
+    grim
+    jq
     bc
     gojq
     yq-go
