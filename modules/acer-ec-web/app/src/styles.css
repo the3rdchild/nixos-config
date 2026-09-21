@@ -4,7 +4,7 @@
   --ink-dim: #9298ae;
   --ink-faint: #6a6f85;
   --line: rgba(255, 255, 255, 0.09);
-  --glass: rgba(12, 14, 22, 0.58);
+  --glass: rgba(12, 14, 22, 0.72);
   --seg-accent: #5b8cff;
 }
 
@@ -17,48 +17,24 @@ body {
   min-height: 100vh;
   color: var(--ink);
   font-family: "Mulish", system-ui, -apple-system, sans-serif;
-  background: #04050a;
+  background:
+    radial-gradient(70% 55% at 20% 0%, rgba(60, 80, 160, 0.22), transparent 70%),
+    radial-gradient(60% 50% at 90% 20%, rgba(120, 50, 160, 0.16), transparent 70%),
+    #04050a;
+  background-attachment: fixed;
   -webkit-font-smoothing: antialiased;
 }
 
 /* ------------------------------------------------------------------ *
-   Backdrop
-   The ThreeUI backgrounds are authored to fill their parent; pin them to
-   the viewport instead. Pointer events are deliberately NOT disabled —
-   the shaders track the cursor, and that interaction is the point. The
-   cards sit above on their own stacking level, so clicks still land.
+   Page
+   The two radial washes below used to sit under a WebGL backdrop. The
+   shaders are gone — they cost 30-60fps and real watts on the same iGPU
+   this panel exists to keep cool, which is an absurd trade for wallpaper —
+   so the gradient is painted straight onto the body and nothing animates
+   behind the cards.
  * ------------------------------------------------------------------ */
-.threeui-background.bg,
-.bg--flat {
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-}
-
-.bg--flat {
-  background:
-    radial-gradient(70% 55% at 20% 0%, rgba(60, 80, 160, 0.22), transparent 70%),
-    radial-gradient(60% 50% at 90% 20%, rgba(120, 50, 160, 0.18), transparent 70%);
-}
-
-.threeui-background.bg canvas {
-  opacity: 0.62;
-}
-
-/* Keeps text legible over whatever the shader is doing underneath. */
-.veil {
-  position: fixed;
-  inset: 0;
-  z-index: 1;
-  pointer-events: none;
-  background:
-    radial-gradient(90% 70% at 50% 0%, rgba(4, 5, 10, 0.25), rgba(4, 5, 10, 0.82) 75%),
-    linear-gradient(180deg, rgba(4, 5, 10, 0.35), rgba(4, 5, 10, 0.7));
-}
-
 .page {
   position: relative;
-  z-index: 2;
   max-width: 1060px;
   margin: 0 auto;
   padding: 40px 20px 72px;
@@ -118,10 +94,19 @@ body {
   gap: 12px;
 }
 
-.head__temp {
+/* CPU, watts and EC temperature, so the numbers you check first are
+   readable without scrolling to the cards that own them. */
+.head__stat {
   font-variant-numeric: tabular-nums;
-  font-size: 14px;
+  font-size: 13px;
   color: var(--ink-dim);
+  padding-left: 12px;
+  border-left: 1px solid var(--line);
+}
+
+.head__stat:first-child {
+  padding-left: 0;
+  border-left: 0;
 }
 
 .ghost {
@@ -157,8 +142,8 @@ body {
   border: 1px solid var(--line);
   border-radius: 20px;
   padding: 22px;
-  backdrop-filter: blur(22px) saturate(1.35);
-  -webkit-backdrop-filter: blur(22px) saturate(1.35);
+  /* No backdrop-filter. It existed to blur a live shader; over a static
+     gradient it is a full-card GPU pass every frame for nothing. */
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
@@ -576,6 +561,248 @@ input[type="color"] {
   vector-effect: non-scaling-stroke;
 }
 
+/* ------------------------------------------------------------------ *
+   Meters
+   One row shape for every scalar in the system card: label, reading, bar,
+   detail line. The bar is tinted with the keyboard accent like everything
+   else, and the width is set inline from a 0-1 value.
+ * ------------------------------------------------------------------ */
+.meter {
+  margin: 0 0 16px;
+}
+
+.meter.is-muted {
+  opacity: 0.5;
+}
+
+.meter__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.meter__label {
+  font-size: 13px;
+  color: var(--ink-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meter__val {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.meter__track {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.meter__fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: currentColor;
+  box-shadow: 0 0 10px currentColor;
+  transition: width 0.4s ease, background 0.25s linear;
+}
+
+.meter__sub {
+  margin-top: 5px;
+  font-size: 11px;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Per-core columns. --v is the 0-1 load, written inline each poll. */
+.cores {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 26px;
+  margin: -8px 0 14px;
+}
+
+.cores__bar {
+  flex: 1;
+  min-width: 3px;
+  height: calc(18% + 82% * var(--v, 0));
+  border-radius: 2px;
+  background: currentColor;
+  opacity: calc(0.28 + 0.72 * var(--v, 0));
+  transition: height 0.4s ease, opacity 0.4s ease;
+}
+
+/* ------------------------------------------------------------------ *
+   Power rails
+   A breakdown, not a list of readings — the server builds them so they do
+   not overlap, which is what makes drawing them against a shared maximum
+   meaningful.
+ * ------------------------------------------------------------------ */
+.rails {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.rails__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.rails__head .k {
+  color: var(--ink-dim);
+}
+
+.rails__head .v {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.rails__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.rail {
+  display: grid;
+  grid-template-columns: 96px 1fr 58px;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.rail__label {
+  color: var(--ink-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rail__track {
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  overflow: hidden;
+}
+
+.rail__fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.85;
+  transition: width 0.4s ease;
+}
+
+.rail__val {
+  color: var(--ink);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------------ *
+   Top consumers
+   The bar lives behind the name rather than in its own column: the table
+   is already four columns wide and the ranking is what the bar is for.
+ * ------------------------------------------------------------------ */
+.apps {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.apps th {
+  font-weight: 500;
+  text-align: left;
+  color: var(--ink-faint);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.apps td {
+  padding: 7px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  color: var(--ink-dim);
+}
+
+.apps__num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  padding-left: 10px;
+}
+
+.apps__watts {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.apps__name {
+  position: relative;
+  max-width: 0;
+  width: 100%;
+}
+
+.apps__bar {
+  position: absolute;
+  inset: 2px 0;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.apps__bar i {
+  display: block;
+  height: 100%;
+  background: currentColor;
+  opacity: 0.14;
+  transition: width 0.4s ease;
+}
+
+.apps__text {
+  position: relative;
+  display: block;
+  padding: 0 8px 0 6px;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.apps__text em {
+  font-style: normal;
+  color: var(--ink-faint);
+}
+
+.apps__text b {
+  font-weight: 500;
+  font-size: 10px;
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--ink-dim);
+}
+
 @media (max-width: 460px) {
   .rotors {
     gap: 10px;
@@ -584,10 +811,18 @@ input[type="color"] {
   .row label {
     min-width: 100%;
   }
+
+  .rail {
+    grid-template-columns: 78px 1fr 50px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .rotor__duty {
+  .rotor__duty,
+  .meter__fill,
+  .cores__bar,
+  .rail__fill,
+  .apps__bar i {
     transition: none;
   }
 }

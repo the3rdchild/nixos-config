@@ -19,9 +19,10 @@ export interface SegmentedProps<T> {
 /**
  * The pill row used for lighting modes and fan profiles.
  *
- * This replaced ThreeUI's LumenCta, which renders each button inside its
- * own <iframe> with its own WebGL context — four of those for four fan
- * profiles is four GPU contexts for a control that is a radio group.
+ * Plain DOM on purpose. The component-library version of this row renders
+ * each button inside its own <iframe> with its own WebGL context — four of
+ * those for four fan profiles is four GPU contexts for a radio group, on
+ * the very iGPU whose thermals this page exists to manage.
  */
 export function Segmented<T extends string | number>({
   options,

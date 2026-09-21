@@ -52,20 +52,6 @@ export function mixRgb(a: Rgb, b: Rgb, t: number): Rgb {
   return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
 }
 
-/** Hue in degrees, which is the unit the ThreeUI background tint wants. */
-export function hueOf(hex: string): number {
-  const [r, g, b] = hexToRgb(hex).map((v) => v / 255);
-  const max = Math.max(r, g, b);
-  const min = Math.min(r, g, b);
-  const d = max - min;
-  if (d === 0) return 220;
-  let h: number;
-  if (max === r) h = ((g - b) / d) % 6;
-  else if (max === g) h = (b - r) / d + 2;
-  else h = (r - g) / d + 4;
-  return ((h * 60) % 360 + 360) % 360;
-}
-
 export interface Frame {
   /** The colour the keys are showing right now. */
   hex: string;
