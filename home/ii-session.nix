@@ -174,6 +174,22 @@ ACTIVATE
     exec qs -c "$cfg" -d
   '';
 
+  # ── plasma-apply-colorscheme, without plasma-workspace.
+  #
+  # The Qt half of the colour pipeline calls this binary and it exists only in
+  # kdePackages.plasma-workspace — 4307 MB of closure for one command, in a
+  # config that deliberately dropped plasma6. ./ii-plasma-apply-colorscheme.py
+  # explains what it does and, more importantly, what it deliberately does not.
+  plasmaApplyColorscheme = pkgs.runCommand "plasma-apply-colorscheme" { } ''
+    mkdir -p $out/bin
+    substitute ${./ii-plasma-apply-colorscheme.py} \
+      $out/bin/plasma-apply-colorscheme \
+      --replace-fail '@python@' '${pkgs.python3}/bin/python3' \
+      --replace-fail '@dbusSend@' '${pkgs.dbus}/bin/dbus-send'
+    chmod +x $out/bin/plasma-apply-colorscheme
+    patchShebangs --host $out/bin/plasma-apply-colorscheme
+  '';
+
   # ── Automatic light/dark from the wallpaper.
   #
   # These dots never look at the wallpaper to decide light or dark. The mode
@@ -195,30 +211,36 @@ ACTIVATE
   autoLightDarkThreshold = "0.5";
 
   autoLightDark = pkgs.writeShellScript "ii-auto-lightdark" ''
-    export PATH=${lib.makeBinPath [ pkgs.imagemagick pkgs.glib pkgs.gawk pkgs.coreutils ]}
+    export PATH=${lib.makeBinPath [ pkgs.imagemagick pkgs.gawk pkgs.coreutils ]}
     flag="''${XDG_CONFIG_HOME:-$HOME/.config}/illogical-impulse/auto-lightdark"
 
-    # Upstream's own rule, kept verbatim as the fallback.
-    from_gsettings() {
-      case "$(gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null | tr -d "'")" in
+    # Upstream's rule as the fallback, but read through dconf rather than
+    # gsettings. ../home/qt.nix documents why: glib.bin's gsettings only
+    # reaches the real database when GIO_EXTRA_MODULES points at dconf's GIO
+    # module, and without it every read silently returns the SCHEMA DEFAULT —
+    # 'default' for color-scheme, which this function would then report as
+    # light. A wrong answer that looks like a working read is the worst kind
+    # for something that runs unattended on every wallpaper change.
+    from_dconf() {
+      case "$(${pkgs.dconf}/bin/dconf read /org/gnome/desktop/interface/color-scheme 2>/dev/null | tr -d "'")" in
         prefer-dark) echo dark ;;
         *)           echo light ;;
       esac
     }
 
     # Missing flag file means on.
-    [ "$(cat "$flag" 2>/dev/null)" = "0" ] && { from_gsettings; exit 0; }
+    [ "$(cat "$flag" 2>/dev/null)" = "0" ] && { from_dconf; exit 0; }
 
     img="$1"
-    [ -n "$img" ] && [ -f "$img" ] || { from_gsettings; exit 0; }
+    [ -n "$img" ] && [ -f "$img" ] || { from_dconf; exit 0; }
     case "$img" in
       *.mp4|*.webm|*.mkv|*.avi|*.mov|*.MP4|*.WEBM|*.MKV|*.AVI|*.MOV)
-        from_gsettings; exit 0 ;;
+        from_dconf; exit 0 ;;
     esac
 
     # Mean of the image collapsed to one grey pixel: 0 is black, 1 is white.
     mean="$(magick "$img" -colorspace Gray -resize 1x1! -format '%[fx:mean]' info: 2>/dev/null)"
-    [ -n "$mean" ] || { from_gsettings; exit 0; }
+    [ -n "$mean" ] || { from_dconf; exit 0; }
     awk -v m="$mean" -v t="${autoLightDarkThreshold}" 'BEGIN { print (m > t) ? "light" : "dark" }'
   '';
 
@@ -664,6 +686,7 @@ in {
   home.packages = with pkgs; [
     venv
     autoLightDarkCtl # `ii-lightdark-auto [status|on|off|toggle]`
+    plasmaApplyColorscheme # see ./ii-plasma-apply-colorscheme.py
 
     # No fonts here on purpose — they are system-wide in
     # ../modules/ii-session.nix. home-manager advertises profile fonts through
