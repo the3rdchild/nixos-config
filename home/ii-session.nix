@@ -247,7 +247,30 @@ ACTIVATE
   #                                 regenerates it whenever a matugen template
   #                                 is toggled in Settings
   #   the five matugen outputs      rewritten on every wallpaper change
+  # Second group: application configs that the applications themselves rewrite.
+  # These are not shell state — they are ordinary app config files that happen
+  # to be shipped by these dots, and every one of them belongs to a program
+  # that saves over it. fish/fish_variables is the one that proved the rule: it
+  # is fish's universal-variable store, written on every `set -U`, so a
+  # symlinked one turns every new shell in the session into a wall of
+  # "Read-only file system (os error 30)".
+  #
+  # kdeglobals matters most of the two dozen: KDE apps rewrite it on any
+  # appearance change, and the colour pipeline writes it too — matugen's
+  # templates/kde/kde-material-you-colors-wrapper.sh regenerates it from the
+  # wallpaper. Read-only, the whole Qt side of the theming silently stops.
+  #
+  # If some other app here turns out to save over its config, the fix is one
+  # more line in this list.
   mutablePaths = [
+    "fish/fish_variables"
+    "kdeglobals"
+    "dolphinrc"
+    "konsolerc"
+    "darklyrc"
+    "Kvantum/kvantum.kvconfig"
+    "kde-material-you-colors/config.conf"
+
     "hypr/custom"
     "hypr/hypridle.conf"
     "hypr/hyprland/shellOverrides"

@@ -24,8 +24,35 @@ let
   # Hyprland never reaches that target, so those units stay asleep and ii's own
   # execs.lua starts its equivalents. This is the same fallback path the plain
   # "Hyprland" entry already uses.
+  # ── QML modules quickshell doesn't carry.
+  #
+  # Session B reuses the quickshell that comes in with caelestia's flake
+  # (quickshell-wrapped 0.3.1) rather than building a second one. That wrapper
+  # only puts qtdeclarative, qtwayland and m3shapes on the QML import path,
+  # which is enough for caelestia and not for these dots: ii and end4-pC import
+  # five modules it has never heard of. Without them the shell dies at load
+  # with "module <x> is not installed" and no bar ever appears.
+  #
+  # NIXPKGS_QT6_QML_IMPORT_PATH rather than a second wrapper binary around qs:
+  # nixpkgs' Qt patch reads this variable, the existing wrapper *prefixes* its
+  # own paths onto whatever it already holds, and exporting it in the session
+  # therefore adds to the search path instead of replacing it. One line, no
+  # rewriting of the 17 places these dots spell `qs`, and session A never sees
+  # it because it is exported here and nowhere else.
+  #
+  # kirigami.unwrapped, not kirigami: the wrapped output is a propagation stub
+  # holding nothing but nix-support, so its lib/qt-6/qml does not exist. The
+  # QML lives in the unwrapped derivation.
+  qmlPath = lib.concatMapStringsSep ":" (p: "${p}/lib/qt-6/qml") [
+    pkgs.qt6.qt5compat # Qt5Compat.GraphicalEffects
+    pkgs.qt6.qtpositioning # QtPositioning
+    pkgs.kdePackages.kirigami.unwrapped # org.kde.kirigami — AppIcon.qml, both shells
+    pkgs.kdePackages.syntax-highlighting # org.kde.syntaxhighlighting
+  ];
+
   launcher = pkgs.writeShellScriptBin "start-hyprland-ii" ''
     export XDG_CONFIG_HOME="$HOME/${cfgDirName}"
+    export NIXPKGS_QT6_QML_IMPORT_PATH="${qmlPath}''${NIXPKGS_QT6_QML_IMPORT_PATH:+:$NIXPKGS_QT6_QML_IMPORT_PATH}"
     exec ${config.programs.hyprland.package}/bin/start-hyprland
   '';
 
