@@ -29,7 +29,10 @@ let
     exec ${config.programs.hyprland.package}/bin/start-hyprland
   '';
 
-  session = pkgs.writeTextFile {
+  # providedSessions must name the .desktop file without its extension —
+  # services.displayManager.sessionPackages type-checks for that attribute and
+  # rejects a plain derivation ("package with provided sessions").
+  session = (pkgs.writeTextFile {
     name = "hyprland-ii-session";
     destination = "/share/wayland-sessions/hyprland-ii.desktop";
     text = ''
@@ -41,7 +44,9 @@ let
       Type=Application
       DesktopNames=Hyprland
     '';
-  };
+  }).overrideAttrs (_: {
+    passthru.providedSessions = [ "hyprland-ii" ];
+  });
 in
 {
   # ── The third entry in the greeter.

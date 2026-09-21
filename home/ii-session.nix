@@ -209,9 +209,14 @@ ACTIVATE
     # in Lua (HOME .. "/.config/..."), in Python argparse defaults that go
     # through expanduser (~/.config/...) and in TOML (matugen's output_path).
     # Only a literal preserves every one of those expansion mechanisms.
-    before=$(grep -rIo '/\.config/' $out | wc -l)
-    grep -rIlZ '/\.config/' $out | xargs -0 -r sed -i 's|/\.config/|/${cfgDirName}/|g'
-    after=$(grep -rIo '/\.config/' $out | wc -l)
+    # `|| true` on every grep here: grep exits 1 when it matches nothing, and
+    # matching nothing is the success condition for the `after` count. stdenv
+    # runs the builder under `set -e -o pipefail`, so an unguarded pipeline
+    # would abort the build at the moment the rewrite succeeded — silently,
+    # since grep prints nothing on no-match.
+    before=$({ grep -rIo '/\.config/' $out || true; } | wc -l)
+    { grep -rIlZ '/\.config/' $out || true; } | xargs -0 -r sed -i 's|/\.config/|/${cfgDirName}/|g'
+    after=$({ grep -rIo '/\.config/' $out || true; } | wc -l)
     echo "config-root rewrite: $before -> $after"
     if [ "$before" -lt 40 ] || [ "$after" -ne 0 ]; then
       echo "unexpected rewrite count — upstream changed how it spells its config root" >&2
@@ -312,13 +317,14 @@ in {
   home.packages = with pkgs; [
     venv
 
-    # Fonts the QML names directly. google-fonts carries Readex Pro, Space
-    # Grotesk and Caveat in one package; material-symbols is the icon font
-    # (Appearance.qml wants "Material Symbols Rounded"); rubik is the
-    # substitute for Google Sans Flex patched in above.
-    google-fonts
-    material-symbols
-    rubik
+    # No fonts here on purpose — they are system-wide in
+    # ../modules/ii-session.nix. home-manager advertises profile fonts through
+    # ~/.config/fontconfig/conf.d/10-hm-fonts.conf, which lives in the config
+    # root session B does not read, so a font in this list would be invisible
+    # in the one session that wants it. google-fonts would also collide here
+    # with the rubik that ../home/caelestia.nix already installs: both ship
+    # share/fonts/truetype/Rubik[wght].ttf from different store paths, and
+    # buildEnv refuses that.
 
     # Colour pipeline.
     matugen
@@ -326,10 +332,8 @@ in {
     libqalculate
 
     # Widgets and helpers the shell shells out to.
-    fuzzel
     wlogout
     hypridle
-    hyprpicker
     hyprsunset
     songrec
     translate-shell

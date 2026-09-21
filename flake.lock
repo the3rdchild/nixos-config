@@ -64,6 +64,43 @@
         "type": "github"
       }
     },
+    "dots-hyprland": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1789354057,
+        "narHash": "sha256-IKdaUJP/6QW2WMv1Lilqh39V/V7xalp/leizJW0+Gdc=",
+        "ref": "main",
+        "rev": "2f0c8bf42b803f4d597572f2a014d4e78d7d9f26",
+        "revCount": 6313,
+        "submodules": true,
+        "type": "git",
+        "url": "https://github.com/end-4/dots-hyprland"
+      },
+      "original": {
+        "ref": "main",
+        "rev": "2f0c8bf42b803f4d597572f2a014d4e78d7d9f26",
+        "submodules": true,
+        "type": "git",
+        "url": "https://github.com/end-4/dots-hyprland"
+      }
+    },
+    "end4-pc": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1789940593,
+        "narHash": "sha256-iMtVtoVkcC+Nw9uaESTWmJbDb1RHM23wforzrH15GsQ=",
+        "owner": "pctrade",
+        "repo": "end4-pC",
+        "rev": "da31320c85500eb130b0011474c917751d41b29a",
+        "type": "github"
+      },
+      "original": {
+        "owner": "pctrade",
+        "repo": "end4-pC",
+        "rev": "da31320c85500eb130b0011474c917751d41b29a",
+        "type": "github"
+      }
+    },
     "home-manager": {
       "inputs": {
         "nixpkgs": [
@@ -168,6 +205,8 @@
       "inputs": {
         "caelestia-dots": "caelestia-dots",
         "caelestia-shell": "caelestia-shell",
+        "dots-hyprland": "dots-hyprland",
+        "end4-pc": "end4-pc",
         "home-manager": "home-manager",
         "hyprmod": "hyprmod",
         "nixpkgs": "nixpkgs",

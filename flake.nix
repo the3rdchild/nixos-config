@@ -44,6 +44,44 @@
       flake = false;
     };
 
+    # ── illogical-impulse (end-4) + the end4-pC fork, for the second session.
+    #
+    # Two halves again, and neither has a flake: both are plain config trees
+    # that ../home/ii-session.nix patches into a single derivation. They only
+    # ever feed session B ("Hyprland (illogical-impulse)"); nothing here
+    # touches the caelestia session.
+    #
+    # type = "git" + submodules = 1, NOT the shorter github: form. The tree
+    # carries one submodule — dots/.config/quickshell/ii/modules/common/
+    # widgets/shapes -> rounded-polygon-qmljs — and github: tarballs never
+    # include submodules. QML imports it by relative path
+    # (widgets/MaterialCookie.qml:8), so without it MaterialCookie,
+    # MaterialShape and MaterialLoadingIndicator fail to load at runtime with
+    # nothing in the logs but a missing-import warning.
+    #
+    # Pinned by rev, not a tag: the repo's tags are date stamps on a fast
+    # branch, and the rev below is what Reference/dots-hyprland has checked
+    # out, so the tree on disk is the tree that gets built.
+    dots-hyprland = {
+      url = "git+https://github.com/end-4/dots-hyprland?ref=main&rev=2f0c8bf42b803f4d597572f2a014d4e78d7d9f26&submodules=1";
+      flake = false;
+    };
+
+    # The fork. Despite "requires illogical-impulse" in its README this is not
+    # an overlay — it is a complete quickshell config root (shell.qml,
+    # modules/, services/) that installs alongside ii rather than over it, so
+    # both land in .config-ii/quickshell/ and `qs -c ii` / `qs -c end4-pC`
+    # switches between them without a rebuild. What it needs from ii is the
+    # rest of the install: the hypr Lua config, the Python venv, the matugen
+    # templates and the fonts.
+    #
+    # No tags at all upstream, so a rev is the only thing to pin to — same
+    # situation as hyprmod below.
+    end4-pc = {
+      url = "github:pctrade/end4-pC/da31320c85500eb130b0011474c917751d41b29a";
+      flake = false;
+    };
+
     # ── HyprMod, the GTK4 settings GUI for the compositor.
     #
     # Not in nixpkgs. The flake exports packages.default and its derivation

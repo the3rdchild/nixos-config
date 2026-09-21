@@ -11,6 +11,7 @@
     ./home.nix
     ./package.nix
     ./hyprland-desktop.nix
+    ./ii-session.nix
     ./service.nix
     ./setting.nix
     ./power.nix
