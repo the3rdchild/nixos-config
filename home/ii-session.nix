@@ -399,6 +399,21 @@ ACTIVATE
     esac
   '';
 
+  # ── Zen's accent, from this session's palette.
+  #
+  # ../home/zen-wallpaper-accent.nix carries the whole explanation of why Zen
+  # needs a CSS file pushed into its profile rather than a pref, and
+  # ../home/zen.nix owns the userChrome.css that consumes it. Only two things
+  # are session B's business: which colours.json is the source, and what runs
+  # the script — both below.
+  #
+  # Session B only, which falls out of the source path on its own: this is
+  # matugen's m3colors output as ~/.config-ii/matugen/config.toml routes it,
+  # and session A writes its palette to ~/.local/state/caelestia/scheme.json
+  # instead. Changing the wallpaper in caelestia leaves this file alone.
+  zenAccent = import ./zen-wallpaper-accent.nix { inherit pkgs; };
+  zenAccentColors = "${config.home.homeDirectory}/.local/state/quickshell/user/generated/colors.json";
+
   # ── The merged, patched config tree.
   #
   # ii supplies the whole install (hypr config, scripts, matugen templates, the
@@ -924,6 +939,45 @@ in {
       '') mutablePaths
     );
 
+  # ── What runs ii-zen-accent.
+  #
+  # A .path unit rather than a patch to switchwall.sh's post_process(), where
+  # the VS Code colour hook lives. Two reasons: the palette is rewritten from
+  # more places than a wallpaper change (a bare regenerate, --noswitch, the
+  # shell re-applying after a restart), and watching the output file catches
+  # all of them without having to find each caller; and it keeps one more
+  # substituteInPlace out of the `dots` derivation, where every anchor is a
+  # thing upstream can rename.
+  #
+  # PathChanged, not PathModified: matugen writes the file and closes it, and
+  # PathChanged fires on that close rather than on each intermediate write —
+  # so the script never reads a half-written colours.json.
+  #
+  # default.target, not graphical-session.target, for the reason ../home/
+  # qt.nix's watcher spells out: the plain "Hyprland" fallback session in the
+  # greeter never reaches graphical-session.target.
+  systemd.user.paths.ii-zen-accent = {
+    Unit.Description = "Watch this session's matugen palette for Zen's accent";
+    Path = {
+      PathChanged = zenAccentColors;
+      Unit = "ii-zen-accent.service";
+    };
+    Install.WantedBy = [ "default.target" ];
+  };
+
+  systemd.user.services.ii-zen-accent = {
+    Unit.Description = "Write the wallpaper's accent into Zen's profile";
+    Service = {
+      Type = "oneshot";
+      # Named explicitly because systemd --user is session A's environment,
+      # and because the script's own default is only right by coincidence —
+      # it happens to be the same path today, and saying so here is what
+      # keeps this unit pointed at session B if that default ever moves.
+      Environment = [ "ZEN_ACCENT_COLORS=${zenAccentColors}" ];
+      ExecStart = "${zenAccent}/bin/ii-zen-accent apply";
+    };
+  };
+
   # ── Packages.
   #
   # Derived from upstream's own nixpkgs mapping, sdata/dist-nix/home-manager/
@@ -946,6 +1000,7 @@ in {
     # putting it in the profile would only add an ~/.nix-profile/opt/MicroTeX
     # nobody looks at.
     autoLightDarkCtl # `ii-lightdark-auto [status|on|off|toggle]`
+    zenAccent # `ii-zen-accent [apply|--restart|auto ...]`, see the unit below
     plasmaTools # plasma-apply-colorscheme + plasma-changeicons, see above
 
     # No fonts here on purpose — they are system-wide in
