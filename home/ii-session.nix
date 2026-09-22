@@ -229,19 +229,29 @@ ACTIVATE
     }
 
     # Missing flag file means on.
-    [ "$(cat "$flag" 2>/dev/null)" = "0" ] && { from_dconf; exit 0; }
+    # $2 is whatever --mode the caller asked for, empty if none. With auto off
+    # it passes straight through, so upstream's own precedence is untouched:
+    # an explicit mode wins, and with neither it falls back to dconf below.
+    explicit="''${2:-}"
+    passthrough() { [ -n "$explicit" ] && echo "$explicit" || from_dconf; }
 
+    [ "$(cat "$flag" 2>/dev/null)" = "0" ] && { passthrough; exit 0; }
+
+    # Auto on outranks the explicit mode — the Settings light/dark buttons
+    # stop having an effect until `ii-lightdark-auto off`. That is the asked-for
+    # behaviour: one switch decides, rather than two that quietly fight.
     img="$1"
-    [ -n "$img" ] && [ -f "$img" ] || { from_dconf; exit 0; }
+    [ -n "$img" ] && [ -f "$img" ] || { passthrough; exit 0; }
     case "$img" in
       *.mp4|*.webm|*.mkv|*.avi|*.mov|*.MP4|*.WEBM|*.MKV|*.AVI|*.MOV)
-        from_dconf; exit 0 ;;
+        passthrough; exit 0 ;;
     esac
 
     # Mean of the image collapsed to one grey pixel: 0 is black, 1 is white.
     mean="$(magick "$img" -colorspace Gray -resize 1x1! -format '%[fx:mean]' info: 2>/dev/null)"
-    [ -n "$mean" ] || { from_dconf; exit 0; }
-    awk -v m="$mean" -v t="${autoLightDarkThreshold}" 'BEGIN { print (m > t) ? "light" : "dark" }'
+    [ -n "$mean" ] || { passthrough; exit 0; }
+    # Below the threshold is dark, at or above it is light.
+    awk -v m="$mean" -v t="${autoLightDarkThreshold}" 'BEGIN { print (m >= t) ? "light" : "dark" }'
   '';
 
   autoLightDarkCtl = pkgs.writeShellScriptBin "ii-lightdark-auto" ''
@@ -419,13 +429,13 @@ ACTIVATE
     # Applied to both shells: each carries its own copy of switchwall.sh.
     for f in $out/.config/quickshell/*/scripts/colors/switchwall.sh; do
       [ -e "$f" ] || continue
-      substituteInPlace "$f" \
-        --replace-fail \
-          'current_mode=$(gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null | tr -d "'"'"'")' \
-          'current_mode="$(${autoLightDark} "$imgpath")"' \
-        --replace-fail \
-          'if [[ "$current_mode" == "prefer-dark" ]]; then' \
-          'if [[ "$current_mode" == "dark" ]]; then'
+      # Inserted before upstream's own block rather than replacing it: with
+      # auto off the helper echoes $mode_flag back unchanged and the original
+      # precedence below runs exactly as written.
+      substituteInPlace "$f" --replace-fail \
+        'if [[ -z "$mode_flag" ]]; then' \
+        'mode_flag="$(${autoLightDark} "$imgpath" "$mode_flag")"
+        if [[ -z "$mode_flag" ]]; then'
     done
 
     # ── Clipboard: picking an entry pastes it.
@@ -658,6 +668,25 @@ in {
         source = config.lib.file.mkOutOfStoreSymlink
           "${config.home.homeDirectory}/.config/${name}";
       }) sharedFromSessionA);
+
+  # ── VS Code follows the session's light/dark, in session B too.
+  #
+  # ../home/vscode.nix already solves this for session A: vscode-theme-settings
+  # asserts window.autoDetectColorScheme plus the preferred light and dark
+  # themes into Code/User/settings.json, editing the JSONC in place rather than
+  # replacing it, because VS Code rewrites that file itself and a store symlink
+  # would make it drop every setting written that way.
+  #
+  # It reads its target from XDG_CONFIG_HOME at run time, so the same binary
+  # serves both roots — hence the extraction into
+  # ../home/vscode-theme-settings.nix. Without this, VS Code in session B keeps
+  # whatever theme it was last on while everything else on screen follows the
+  # wallpaper.
+  home.activation.iiVscodeTheme = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+    XDG_CONFIG_HOME="${cfgDir}" run ${
+      import ./vscode-theme-settings.nix { inherit pkgs; }
+    }/bin/vscode-theme-settings
+  '';
 
   # ── Seed-once copies of everything written at runtime.
   home.activation.iiSessionMutableConfigs =
