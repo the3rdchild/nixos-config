@@ -2,21 +2,26 @@
 #
 # SCOPE
 #   Everything Qt in the session: Dolphin, qdirstat, OBS, flashprint. GTK is
-#   NOT touched — caelestia owns that side (adw-gtk3-dark + a generated
-#   gtk.css) and ./themes.nix owns the gtk/icon/cursor gsettings triplet.
+#   NOT touched — the session's own matugen pipeline owns that side
+#   (adw-gtk3 / adw-gtk3-dark plus a generated gtk.css, see ./ii-session.nix)
+#   and ./themes.nix owns the gtk/icon/cursor dconf triplet.
 #
 # WHY THIS EXISTS AT ALL
-#   caelestia's `apply_qt` (caelestia/utils/theme.py) writes its generated
-#   palette to ~/.config/qtengine/. qtengine is AUR-only, so on NixOS that
-#   directory is written and never read: the Qt half of the theme has been
-#   dead the whole time. ./caelestia.nix papered over it by pointing
-#   QT_QPA_PLATFORMTHEME at qt6ct instead, but nothing ever wrote qt6ct.conf,
-#   so it sat on whatever was hand-set in July 2026 — a Catppuccin Mocha
-#   palette, Tokyonight-Dark icons, and `style=kvantum` naming a style plugin
-#   that isn't even installed. Dark/light did nothing to it.
+#   It was written against caelestia, whose `apply_qt` (utils/theme.py) wrote
+#   its generated palette to ~/.config/qtengine/. qtengine is AUR-only, so on
+#   NixOS that directory was written and never read: the Qt half of the theme
+#   was dead the whole time, and pointing QT_QPA_PLATFORMTHEME at qt6ct
+#   instead only moved the problem, because nothing ever wrote qt6ct.conf.
+#
+#   That session is gone. What replaced it has the same shape of gap: the
+#   illogical-impulse dots drive Qt through kde-material-you-colors, which
+#   writes kdeglobals from the wallpaper but knows nothing about a dark/light
+#   flip that did not come from a wallpaper change. This module is what makes
+#   the flip itself authoritative.
 #
 # WHAT IT DOES INSTEAD
-#   QT_QPA_PLATFORMTHEME=kde (the patch in ./caelestia.nix) hands Qt apps to
+#   QT_QPA_PLATFORMTHEME=kde (set by the session's own hypr/hyprland/env.lua)
+#   hands Qt apps to
 #   plasma-integration, which is the real KDE platform theme: it reads
 #   ~/.config/kdeglobals, and — importantly — it listens on the session bus
 #   for org.kde.KGlobalSettings.notifyChange and re-applies the palette to
@@ -28,9 +33,10 @@
 #   files. No Plasma session, no plasma-workspace, no KCM involved.
 #
 # THE DARK/LIGHT SIGNAL
-#   `caelestia scheme` writes /org/gnome/desktop/interface/color-scheme as
-#   prefer-dark / prefer-light on every scheme change (theme.py:317), next to
-#   icon-theme (Papirus-Dark / Papirus-Light). That dconf key is the only
+#   switchwall.sh's pre_process() writes
+#   /org/gnome/desktop/interface/color-scheme as prefer-dark / prefer-light on
+#   every wallpaper change, next to gtk-theme (see the dconf patch in
+#   ./ii-session.nix). That dconf key is the only
 #   session-wide dark/light truth here, and it is already what GTK follows —
 #   which is exactly why the icon theme is mirrored from it rather than pinned
 #   to Breeze's own: Dolphin and the GTK apps then draw the same icons.
@@ -64,8 +70,10 @@ let
     # database when GIO_EXTRA_MODULES points at dconf's GIO module; without it
     # every read silently returns the SCHEMA DEFAULT — 'default' for
     # color-scheme and 'Adwaita' for icon-theme — which looks like a working
-    # read and is always light. dconf talks to the same database caelestia
-    # writes with (`dconf write`, theme.py:315-319) and needs no GIO plumbing.
+    # read and is always light. dconf talks to the same database everything
+    # else on this machine writes the key with, and needs no GIO plumbing —
+    # including switchwall.sh, patched to `dconf write` in ./ii-session.nix
+    # for exactly this reason.
     DCONF = "${pkgs.dconf}/bin/dconf"
     IFACE = "/org/gnome/desktop/interface/"
 
@@ -233,9 +241,9 @@ in
   # them; here it was plain see-through, and a Dolphin context menu over a
   # folder grid was unreadable.
   #
-  # 75 rather than 100 because the compositor blur this pairs with is on again
-  # (blurEnabled in ../home/caelestia.nix) — fully opaque menus would throw the
-  # effect away, and 40 was only ever unreadable for want of the blur.
+  # 75 rather than 100 because the compositor blur this pairs with is on —
+  # fully opaque menus would throw the effect away, and 40 was only ever
+  # unreadable for want of the blur.
   #
   # Same activation pattern as the keys above: breezerc is written by Breeze's
   # own settings dialog, so only the one key is asserted, never the file.

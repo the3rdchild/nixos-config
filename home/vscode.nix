@@ -7,8 +7,10 @@
 #   wired up here: xdg-desktop-portal-gtk is the Settings backend (the
 #   hyprland portal doesn't implement that interface, so it falls through to
 #   gtk per hyprland-portals.conf), and it maps the same
-#   org.gnome.desktop.interface color-scheme key that `caelestia scheme`
-#   writes. Verified by watching SettingChanged: flipping the mode emits
+#   org.gnome.desktop.interface color-scheme key that switchwall.sh's
+#   pre_process() writes on every wallpaper change (see the dconf patch in
+#   ./ii-session.nix). Verified by watching SettingChanged: flipping the mode
+#   emits
 #   org.freedesktop.appearance/color-scheme = 1 for dark, 2 for light.
 #
 #   So unlike the Qt side (./qt.nix) there is nothing to watch and nothing to
@@ -18,7 +20,7 @@
 #   home-manager writes settings.json as a symlink into the store. VS Code
 #   then cannot save ANY setting from its own UI, and this file is almost
 #   entirely settings that were set that way. Same reasoning as the
-#   copy-once mutableConfigs in ./caelestia.nix: the app owns the file.
+#   seed-once mutablePaths in ./ii-session.nix: the app owns the file.
 #
 #   Which rules out a jq-style rewrite too — settings.json here is JSONC and
 #   carries comments (the ntfs-3g/FUSE watcher exclusions), and every

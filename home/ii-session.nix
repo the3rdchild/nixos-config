@@ -5,21 +5,28 @@
   lib,
   ...
 }: let
-  # ── Session B: illogical-impulse + the end4-pC fork.
+  # ── The session: illogical-impulse + the end4-pC fork.
   #
-  # The whole point of this file is that it never touches session A. Session A
-  # (caelestia, ../home/caelestia.nix) owns ~/.config; this one owns a second
-  # config root and session B is launched with XDG_CONFIG_HOME pointed at it:
+  # This file owns a config root of its own, and the session is launched with
+  # XDG_CONFIG_HOME pointed at it:
   #
-  #   ~/.config/      caelestia          (untouched by anything here)
+  #   ~/.config/      home-manager's own output, for shells and apps started
+  #                   outside the session (see ../home/shell.nix)
   #   ~/.config-ii/   illogical-impulse  (everything below)
+  #
+  # The split was built so this session could sit beside caelestia without
+  # either touching the other's files. Caelestia has since been dropped and
+  # this is the only session left, but the split is kept: it is what makes the
+  # whole tree a store symlink with a small, listed set of mutable exceptions
+  # (see mutablePaths), rather than home-manager and the dots fighting over
+  # one ~/.config.
   #
   # That split is cheap because the shell half of these dots is already
   # XDG-aware — 33 sites across ii and end4-pC read
   # ${XDG_CONFIG_HOME:-$HOME/.config} rather than hardcoding. Everything else
   # that matters (fish, kitty, foot, fontconfig, kdeglobals, Kvantum, matugen,
-  # fuzzel, wlogout, mpv, dconf) honours XDG_CONFIG_HOME on its own, so the two
-  # sessions simply never see each other's files.
+  # fuzzel, wlogout, mpv, dconf) honours XDG_CONFIG_HOME on its own, so
+  # nothing here has to be told twice where its config lives.
   #
   # What is NOT XDG-aware is the Hyprland Lua config and a dozen helper
   # scripts, which spell $HOME/.config literally. Those are rewritten in the
@@ -31,6 +38,63 @@
   # side under .config-ii/quickshell/, so this is only the default: `qs -c ii`
   # and `qs -c end4-pC` switch at runtime, no rebuild, no logout.
   qsConfig = "end4-pC";
+
+  # ── quickshell itself: the `qs` binary both configs run under.
+  #
+  # This used to live in ../home/caelestia.nix, reached through
+  # inputs.caelestia-shell.inputs.quickshell — session B was running session
+  # A's quickshell the whole time, which is why dropping that session started
+  # with moving this. ../flake.nix now takes the same rev as a direct input,
+  # so the store path is byte-identical to what was running before the move.
+  #
+  # The two overrides are upstream quickshell's own optional backends, off for
+  # the same reason caelestia turned them off: X11 and i3/sway support compile
+  # in Xlib and a sway IPC client that a Wayland-only Hyprland session never
+  # calls. Keeping them would only widen the closure.
+  #
+  # withModules adds QML modules to the wrapper's import path. Only
+  # qtimageformats here — the m3shapes module that used to be in this list is
+  # caelestia's bar-workspace shape library, and these dots do not import it:
+  # modules/common/widgets/MaterialShape.qml reads its own
+  # `shapes/material-shapes.js`, the rounded-polygon-qmljs submodule the build
+  # already asserts is present.
+  #
+  # The other five QML modules these dots need are not here but in
+  # ../modules/ii-session.nix, exported as NIXPKGS_QT6_QML_IMPORT_PATH — see
+  # the comment there for why the session variable rather than a second
+  # wrapper.
+  quickshell =
+    (inputs.quickshell.packages.${pkgs.stdenv.hostPlatform.system}.default.override {
+      withX11 = false;
+      withI3 = false;
+    }).withModules [ pkgs.qt6.qtimageformats ];
+
+  # ── SUPER+SHIFT+B → pwvucontrol, as a show/hide toggle.
+  #
+  # Also inherited from ../home/caelestia.nix, where session B's keybind patch
+  # already borrowed it (see the SUPER+SHIFT+B rewrite in `dots` below, which
+  # is the only caller now).
+  #
+  # pwvucontrol is GTK4 without single-instance handling, so a plain
+  # `exec_cmd pwvucontrol` bind stacks a fresh window on every press. This
+  # does the three-state toggle instead: launch if absent, focus if open but
+  # unfocused, close if it is the active window.
+  #
+  # The class is matched case-insensitively on the substring rather than
+  # pinned to the literal `com.saivert.pwvucontrol` app-id, so the bind keeps
+  # working if upstream renames it.
+  volumeControlToggle = pkgs.writeShellScriptBin "volume-control-toggle" ''
+    jq=${pkgs.jq}/bin/jq
+    addr=$(hyprctl clients -j | $jq -r 'first(.[] | select(.class | test("pwvucontrol"; "i")) | .address) // empty')
+
+    if [ -z "$addr" ]; then
+      exec ${pkgs.pwvucontrol}/bin/pwvucontrol
+    elif [ "$addr" = "$(hyprctl activewindow -j | $jq -r '.address // empty')" ]; then
+      hyprctl dispatch closewindow "address:$addr"
+    else
+      hyprctl dispatch focuswindow "address:$addr"
+    fi
+  '';
 
   # ── The Python "venv".
   #
@@ -409,8 +473,9 @@ ACTIVATE
   #
   # Session B only, which falls out of the source path on its own: this is
   # matugen's m3colors output as ~/.config-ii/matugen/config.toml routes it,
-  # and session A writes its palette to ~/.local/state/caelestia/scheme.json
-  # instead. Changing the wallpaper in caelestia leaves this file alone.
+  # nothing else writes it. It was chosen when caelestia still existed and
+  # wrote its own palette to ~/.local/state/caelestia/scheme.json; that file
+  # is now stale and read by nobody.
   zenAccent = import ./zen-wallpaper-accent.nix { inherit pkgs; };
   zenAccentColors = "${config.home.homeDirectory}/.local/state/quickshell/user/generated/colors.json";
 
@@ -690,17 +755,17 @@ ACTIVATE
 
     # ── The four app keys.
     #
-    # Three of them match session A exactly: ../home/caelestia.nix binds
-    # SUPER+SHIFT+Z and +V at :1288-1289 and SUPER+SHIFT+O at :1310. Muscle
-    # memory is the whole reason the capture keys above were aligned too; an
-    # editor that opens on one session and does nothing on the other is worse
-    # than either choice made consistently.
+    # Three of them (SUPER+SHIFT+Z, +V, +O) were chosen to match the caelestia
+    # session key for key, back when both sessions existed and an editor that
+    # opened on one and did nothing on the other was the worst outcome. That
+    # session is gone; the keys stay because they are the ones in muscle
+    # memory, which is the same reason the capture keys above were aligned.
     #
-    # The fourth deliberately does NOT match. Session A puts pwvucontrol on
-    # SUPER+B (caelestia.nix:1246); here it is SUPER+SHIFT+B, because SUPER+B
-    # is upstream's second key for the left sidebar and that sidebar is a
-    # thing session A has no equivalent of. Asked for explicitly, and the
-    # asymmetry is the point rather than an oversight.
+    # The fourth deliberately did NOT match: caelestia put pwvucontrol on
+    # SUPER+B, and here it is SUPER+SHIFT+B, because SUPER+B is upstream's
+    # second key for the left sidebar — a panel caelestia had no equivalent
+    # of. Asked for explicitly, and the asymmetry was the point rather than an
+    # oversight.
     #
     # SUPER+SHIFT+B was not free either — it is upstream's "Media: Previous
     # track" (keybinds.lua:135-136). That is the one thing this change costs,
@@ -713,12 +778,11 @@ ACTIVATE
     # fires every bind that matches, so an extra SUPER+SHIFT+B would skip a
     # track every time the volume window opened.
     #
-    # volume-control-toggle is session A's script (../home/caelestia.nix, the
-    # let block above its keybinds) and is reused verbatim: home.packages is
-    # one profile shared by both sessions, so it is already on PATH here, and
-    # everything it does is hyprctl against whichever compositor is running.
-    # It exists because pwvucontrol is GTK4 with no single-instance handling —
-    # a plain exec stacks a new window on every press.
+    # volume-control-toggle is defined in the let block above — it came over
+    # from the caelestia session, which was its original home and is now this
+    # bind's only caller. It exists because pwvucontrol is GTK4 with no
+    # single-instance handling: a plain exec stacks a new window on every
+    # press.
     #
     # sed with N rather than --replace-fail, because this bind spans two lines
     # and Nix strips the common indentation from a multi-line string, so the
@@ -852,9 +916,10 @@ IIBINDS
     "gtk-4.0/gtk.css"
   ];
 
-  # Paths that stay one definition across both sessions. The comment on
-  # home.file says why these three and nothing else.
-  sharedFromSessionA = [ "git" "menus" "mimeapps.list" "dconf" ];
+  # Paths kept as one definition, shared with ~/.config rather than shipped
+  # by the dots. The comment on home.file says why these four and nothing
+  # else.
+  sharedFromConfigHome = [ "git" "menus" "mimeapps.list" "dconf" ];
 
   # The tree minus the mutable paths — this is what gets symlinked.
   linked = pkgs.runCommand "illogical-impulse-linked" { } ''
@@ -877,18 +942,18 @@ IIBINDS
 in {
   # ── The tree itself.
   #
-  # recursive = true, for the same reason ../home/caelestia.nix needs it: a
-  # plain directory source symlinks the whole tree read-only, and then nothing
-  # can create hypr/custom/*.lua or illogical-impulse/config.json at runtime.
-  # recursive makes real directories and symlinks the files individually.
+  # recursive = true: a plain directory source symlinks the whole tree
+  # read-only, and then nothing can create hypr/custom/*.lua or
+  # illogical-impulse/config.json at runtime. recursive makes real directories
+  # and symlinks the files individually.
 
-  # ── Tooling that both sessions must agree on.
+  # ── Tooling this session has to share with the rest of the user.
   #
-  # Session B reads ~/.config-ii, so everything home-manager writes into
-  # ~/.config is invisible here. For the dots that is the point — ii ships its
-  # own fish, kitty, foot, fontconfig, gtk-3.0 and starship.toml, and the
-  # caelestia/uwsm/systemd entries are session A's business. But three of them
-  # are not look-and-feel, and losing them breaks work rather than changing
+  # The session reads ~/.config-ii, so everything home-manager writes into
+  # ~/.config is invisible to it. For the dots that is the point — ii ships
+  # its own fish, kitty, foot, fontconfig, gtk-3.0 and starship.toml, and
+  # would rather not see home-manager's. But four of those paths are not
+  # look-and-feel, and losing them breaks work rather than changing
   # appearance:
   #
   #   git            without ~/.config/git/config the only thing left is a
@@ -935,14 +1000,14 @@ in {
         recursive = true;
       };
     }
-    # The three shared paths, linked at their live ~/.config location.
+    # The four shared paths, linked at their live ~/.config location.
     // lib.listToAttrs (map (name:
       lib.nameValuePair "${cfgDirName}/${name}" {
         source = config.lib.file.mkOutOfStoreSymlink
           "${config.home.homeDirectory}/.config/${name}";
-      }) sharedFromSessionA);
+      }) sharedFromConfigHome);
 
-  # ── VS Code follows the session's light/dark, in session B too.
+  # ── VS Code follows the session's light/dark inside this config root too.
   #
   # ../home/vscode.nix already solves this for session A: vscode-theme-settings
   # asserts window.autoDetectColorScheme plus the preferred light and dark
@@ -1028,6 +1093,9 @@ in {
   # above now; qt6-avif-image-plugin turned out to be kimageformats under
   # another name and is on QT_PLUGIN_PATH in ../modules/ii-session.nix.
   home.packages = with pkgs; [
+    # The shell runtime itself. Inherited from the dropped caelestia session,
+    # which is the only reason it was ever somewhere else — see the let block.
+    quickshell # `qs`
     venv
     # No microtex here: nothing runs it from PATH. The QML is pointed at its
     # store path in `dots` above, and that reference is what keeps it alive —
@@ -1038,13 +1106,26 @@ in {
     plasmaTools # plasma-apply-colorscheme + plasma-changeicons, see above
 
     # No fonts here on purpose — they are system-wide in
-    # ../modules/ii-session.nix. home-manager advertises profile fonts through
+    # ../modules/ii-session.nix, which installs google-fonts, material-symbols
+    # and rubik. home-manager advertises profile fonts through
     # ~/.config/fontconfig/conf.d/10-hm-fonts.conf, which lives in the config
     # root session B does not read, so a font in this list would be invisible
-    # in the one session that wants it. google-fonts would also collide here
-    # with the rubik that ../home/caelestia.nix already installs: both ship
-    # share/fonts/truetype/Rubik[wght].ttf from different store paths, and
-    # buildEnv refuses that.
+    # in the one session that wants it.
+
+    # ── Everything below came over from ../home/caelestia.nix when the
+    # caelestia session was dropped. It is here rather than in
+    # ./packages.nix because each one is reached by name from inside these
+    # dots, so losing it breaks a bind or a panel rather than a convenience.
+    fuzzel # SUPER+V clipboard, SUPER+. emoji picker; its theme file is
+           # generated by matugen (see mutablePaths)
+    volumeControlToggle # SUPER+SHIFT+B, see the let block
+    pwvucontrol # what that toggle actually launches
+    libnotify # notify-send, used from the shells and several scripts
+    cliphist # the clipboard history both Cliphist.qml patches above drive;
+             # execs.lua starts the two watchers, so no systemd unit here
+    wl-clipboard # wl-copy / wl-paste, the other half of every clipboard path
+    gnome-keyring # scripts/keyring/unlock.sh; the PAM and D-Bus halves are
+                  # system-wide in ../modules/ii-session.nix
 
     # Colour pipeline.
     matugen

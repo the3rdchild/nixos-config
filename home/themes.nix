@@ -2,13 +2,15 @@
 #
 # SCOPE
 #   This module manages ONLY the GTK (gtk-theme), icon-theme, and cursor-theme
-#   for the user session. Everything caelestia draws — the bar, launcher,
-#   notifications, foot, btop — is coloured by `caelestia scheme` from the
-#   current wallpaper and must not be pinned here.
+#   for the user session. Everything the shell draws — the bar, launcher,
+#   notifications, foot, btop — is coloured from the current wallpaper by the
+#   session's own matugen pipeline (see ./ii-session.nix) and must not be
+#   pinned here.
 #
-#   The cursor is the one value both sides care about, so `themes.activeCursor`
-#   is exported and baked into hypr-vars.lua by ./caelestia.nix. Change the
-#   theme here and the Hyprland cursor follows on next login.
+#   All three keys land in dconf, which is the one place both this module and
+#   the session's own theming scripts read. `themes.activeCursor` used to be
+#   exported for ./caelestia.nix to bake into hypr-vars.lua; with that session
+#   gone the cursor reaches Hyprland through dconf like everything else.
 #
 # WHAT IT DOES
 #   1. Defines a small, curated registry of themes (Catppuccin / Tokyo Night /
@@ -129,11 +131,17 @@ let
   # ── The GTK theme name, corrected per dark/light mode.
   #
   # WHY THIS IS NEEDED
-  #   caelestia's apply_gtk (utils/theme.py:316) writes the dconf gtk-theme
-  #   key unconditionally as "adw-gtk3-dark" — the DARK variant, even when the
-  #   line immediately below it is writing prefer-light. It is a genuine
-  #   upstream bug, invisible in the shell (which colours itself from
-  #   scheme.json) and visible only in GTK apps.
+  #   It was written for caelestia's apply_gtk (utils/theme.py:316), which
+  #   wrote the dconf gtk-theme key unconditionally as "adw-gtk3-dark" — the
+  #   DARK variant, even when the line immediately below it was writing
+  #   prefer-light. A genuine upstream bug, invisible in the shell (which
+  #   coloured itself from scheme.json) and visible only in GTK apps.
+  #
+  #   That session is gone and its successor gets this right: switchwall.sh's
+  #   pre_process() writes gtk-theme and color-scheme as a matching pair (see
+  #   the dconf patch in ./ii-session.nix). This watcher is kept anyway —
+  #   ./theme-switch and any hand-run `dconf write` still set color-scheme on
+  #   its own, and this is what keeps gtk-theme from being left behind.
   #
   #   Two things made it worse here. adw-gtk3 was not installed at all, so
   #   GTK3 fell back to Adwaita; and ~/.config/gtk-3.0/settings.ini still
@@ -181,7 +189,7 @@ let
     apply
 
     # `dconf watch` prints the changed key's full path, then its value. Only
-    # color-scheme matters; caelestia writes it immediately AFTER gtk-theme
+    # color-scheme matters; the colour pipeline writes it immediately AFTER gtk-theme
     # (theme.py:316 then 317), so by the time this fires the wrong value is
     # already in place and this overwrites it.
     dconf watch $iface/ | while read -r line; do
@@ -251,9 +259,9 @@ let
     gsettings set org.gnome.desktop.interface color-scheme "$color"
 
     echo "Switched to: $name ($gtk / $icon / $cursor)"
-    echo "NOTE: the caelestia shell/foot/btop palette is NOT changed — it is"
-    echo "      derived from the wallpaper. Use 'caelestia scheme' for those."
-    echo "      The Hyprland cursor updates at next login (hypr-vars.lua)."
+    echo "NOTE: the shell/foot/btop palette is NOT changed — it is derived"
+    echo "      from the wallpaper by the session's own colour pipeline."
+    echo "      Change the wallpaper to change those."
   '';
 in
 {
@@ -264,8 +272,10 @@ in
       description = "Active theme key (see registry in home/themes.nix).";
     };
 
-    # Read by home/caelestia.nix, which bakes it into hypr-vars.lua so the
-    # cursor execs.lua sets at session start matches the one applied here.
+    # Nothing reads this any more — ./caelestia.nix did, to bake the name
+    # into hypr-vars.lua. Kept because it is the one place the active
+    # cursor's name is stated as a value rather than looked up, and it costs
+    # nothing: readOnly, derived, no config it can contradict.
     activeCursor = lib.mkOption {
       type = lib.types.str;
       readOnly = true;
@@ -281,9 +291,10 @@ in
       gtkThemeSync
 
       # Not one of the registry themes above and deliberately not in it: this
-      # is the theme caelestia names on every scheme change, so it has to
-      # exist no matter which entry `themes.active` points at. Ships both the
-      # adw-gtk3 and adw-gtk3-dark trees.
+      # is the theme switchwall.sh's pre_process() writes to dconf on every
+      # wallpaper change, so it has to exist no matter which entry
+      # `themes.active` points at. Ships both the adw-gtk3 and adw-gtk3-dark
+      # trees.
       pkgs.adw-gtk3
     ];
 

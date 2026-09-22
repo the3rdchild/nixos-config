@@ -5,12 +5,24 @@
     enable = true;
     package = pkgs.hyprland;
 
-    # Only turns on programs.uwsm (the uwsm binary + its user units). The
-    # "Hyprland (uwsm-managed)" session entry itself ships in the Hyprland
-    # package, next to the plain one — but its TryExec is uwsm, so without
-    # this line the greeter hides it. The plain "Hyprland" entry stays as the
-    # rollback. See docs/uwsm-migration.md.
-    withUWSM = true;
+    # Off since the caelestia session was dropped: that session was the only
+    # thing that needed graphical-session.target, and the illogical-impulse
+    # session deliberately does not run under UWSM (./ii-session.nix says
+    # why). All this turns off is programs.uwsm — the uwsm binary and its user
+    # units.
+    #
+    # It does NOT remove the "Hyprland (uwsm-managed)" entry from the greeter,
+    # which is the thing worth knowing here: that entry ships inside the
+    # Hyprland package and its TryExec is an absolute store path, so it stays
+    # listed and resolvable regardless. ./ii-session.nix filters it out of
+    # services.displayManager.sessionPackages instead — see the comment there.
+    #
+    # What this costs, stated plainly: the `uwsm app` transient scopes are
+    # gone, so the VS Code memory cap in ../home/app-limits.nix has nothing to
+    # attach to. That cap was already inert in this session for the same
+    # reason, so nothing that worked today stops working — but putting the
+    # session under UWSM is what would bring it back. See docs/uwsm-migration.md.
+    withUWSM = false;
   };
 
   # Feral GameMode — used by Heroic Games Launcher and ProtonPlus (e.g. STRINOVA)
@@ -36,7 +48,8 @@
     qdirstat
 
     # Kept deliberately after plasma6 was removed from ./service.nix — this is
-    # the file manager caelestia opens (fileExplorer in ../home/caelestia.nix).
+    # the file manager the session opens for SUPER+E and for every "show in
+    # folder" action that goes through org.freedesktop.FileManager1.
     # It stands alone fine: its own closure already carries breeze-icons,
     # kiconthemes, kio-extras and qtsvg, so no Plasma session is involved.
     kdePackages.dolphin

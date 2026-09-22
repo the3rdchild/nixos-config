@@ -51,10 +51,18 @@
   # "kwin" here means the kwin_wayland binary alone, not a Plasma session —
   # roughly one package, against the ~35 the desktop manager pulled in.
   #
-  # hyprland-uwsm, not hyprland: the compositor runs as a systemd user unit
-  # under UWSM, so graphical-session.target is actually reached (withUWSM in
-  # ./package.nix). "Hyprland" is still listed in the greeter as the fallback.
-  services.displayManager.defaultSession = "hyprland-uwsm";
+  # hyprland-ii, the illogical-impulse session (./ii-session.nix). It is the
+  # only session with a shell since caelestia was dropped, and the greeter
+  # would otherwise keep defaulting to an entry that starts a bare compositor
+  # with nothing drawn on top of it.
+  #
+  # It was "hyprland-uwsm" — the UWSM-managed entry — because the caelestia
+  # session needed graphical-session.target for its user units. This session
+  # deliberately does not run under UWSM (see ./ii-session.nix), and that
+  # entry is now filtered out of the greeter entirely, there. The plain
+  # "Hyprland" entry stays as the rollback: same compositor, no
+  # XDG_CONFIG_HOME override, so it comes up bare but usable.
+  services.displayManager.defaultSession = "hyprland-ii";
 
   services.displayManager.sddm = {
     autoNumlock = true;

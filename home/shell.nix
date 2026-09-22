@@ -21,7 +21,7 @@
       cbe = "sudo nix-collect-garbage -d && sudo nix profile wipe-history --profile /nix/var/nix/profiles/system";
     };
 
-    # From caelestia's fish/config.fish.
+    # Inherited from the caelestia dots' fish/config.fish.
     shellAbbrs = {
       lg = "lazygit";
       gd = "git diff";
@@ -47,32 +47,35 @@
       lla = "ls -la";
     };
 
-    # Caelestia's config.fish inits starship, direnv and zoxide by hand. Here
-    # those are home-manager modules (see the bottom of this file and
-    # ./starship.nix) which inject their own fish hooks — repeating them
-    # would source each hook twice.
+    # starship, direnv and zoxide are home-manager modules here (see the
+    # bottom of this file and ./starship.nix) and inject their own fish
+    # hooks, so nothing below may init them by hand — that would source each
+    # hook twice.
+    #
+    # Scope worth knowing: this configures ~/.config/fish, which the
+    # illogical-impulse session does NOT read — it ships its own config.fish
+    # under the alternate config root (see ./ii-session.nix). So this is the
+    # fish you get on a TTY, over SSH, or anywhere XDG_CONFIG_HOME is unset,
+    # and the two are deliberately kept saying the same things.
     interactiveShellInit = ''
-      # Caelestia's `ls`. Replaces the old `ls --color=auto` alias.
       alias ls='eza --icons --group-directories-first -1'
 
-      # Replay the palette caelestia generates from the current wallpaper.
+      # Replay the palette the shell generates from the current wallpaper.
       # This is how foot (and any other terminal) picks up the scheme —
-      # there are no colours in foot.ini itself.
-      cat ~/.local/state/caelestia/sequences.txt 2> /dev/null
+      # there are no colours in foot.ini itself. Same file the session's own
+      # config.fish reads; it used to be caelestia's equivalent under
+      # ~/.local/state/caelestia, which stopped being written when that
+      # session was dropped.
+      cat ~/.local/state/quickshell/user/generated/terminal/sequences.txt 2> /dev/null
 
       # Lets foot jump between prompts (ctrl+shift+z / ctrl+shift+x).
       function mark_prompt_start --on-event fish_prompt
           echo -en "\e]133;A\e\\"
       end
-
-      # Machine-local additions, written by hand. home/caelestia.nix creates
-      # this as an empty file so the source never errors.
-      set -q XDG_CONFIG_HOME && set -l cConf $XDG_CONFIG_HOME/caelestia || set -l cConf $HOME/.config/caelestia
-      source $cConf/user-config.fish 2> /dev/null
     '';
   };
 
-  # `cd` is remapped to zoxide, matching caelestia's config.fish.
+  # `cd` is remapped to zoxide, matching the session's own config.fish.
   programs.zoxide = {
     enable = true;
     options = [ "--cmd cd" ];

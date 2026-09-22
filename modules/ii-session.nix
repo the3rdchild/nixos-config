@@ -11,34 +11,49 @@ let
   # <dir>/hypr/hyprland.lua". So no -c is needed, and more importantly every
   # other program launched from this session reads the same alternate root
   # without being told: fish, kitty, foot, fontconfig, kdeglobals, Kvantum,
-  # matugen, fuzzel, dconf. That is what keeps the caelestia session's
-  # ~/.config completely untouched.
+  # matugen, fuzzel, dconf. That began as a way to keep the caelestia
+  # session's ~/.config untouched; with that session dropped it is simply
+  # where these dots live, and ~/.config now holds only what home-manager
+  # writes for shells outside the session (see ../home/shell.nix).
   #
   # start-hyprland, not Hyprland, to match the plain session entry that ships
   # in the Hyprland package — it is the watchdog wrapper.
   #
-  # Deliberately NOT uwsm. Under uwsm the compositor runs as a user unit and
-  # graphical-session.target is reached, which would start the caelestia shell,
-  # the polkit agent and both cliphist watchers (../home/caelestia.nix) on top
-  # of this session — two shells fighting over the same layer surfaces. Plain
-  # Hyprland never reaches that target, so those units stay asleep and ii's own
-  # execs.lua starts its equivalents. This is the same fallback path the plain
-  # "Hyprland" entry already uses.
+  # NOT uwsm — and the reason has changed, so read this before flipping it.
+  #
+  # Originally it was a hard constraint: under uwsm the compositor runs as a
+  # user unit and graphical-session.target is reached, which would have
+  # started the caelestia shell, its polkit agent and both its cliphist
+  # watchers on top of this session — two shells fighting over the same layer
+  # surfaces. That session is gone, so that argument is gone with it, and
+  # ../modules/package.nix now has withUWSM = false.
+  #
+  # What still argues against uwsm is smaller but real: this session IS the
+  # XDG_CONFIG_HOME override above, and under uwsm the unit's environment
+  # comes from uwsm's own env files under ~/.config/uwsm — the very root this
+  # session is pointed away from. XDG autostart also runs, which can duplicate
+  # the polkit agent and cliphist watchers execs.lua starts itself.
+  #
+  # What it would buy: `uwsm app` transient scopes, and with them the VS Code
+  # memory cap in ../home/app-limits.nix, which has nothing to attach to today.
+  # That is a project of its own, not a flag flip.
   # ── QML modules quickshell doesn't carry.
   #
-  # Session B reuses the quickshell that comes in with caelestia's flake
-  # (quickshell-wrapped 0.3.1) rather than building a second one. That wrapper
-  # only puts qtdeclarative, qtwayland and m3shapes on the QML import path,
-  # which is enough for caelestia and not for these dots: ii and end4-pC import
-  # five modules it has never heard of. Without them the shell dies at load
-  # with "module <x> is not installed" and no bar ever appears.
+  # quickshell-wrapped 0.3.1, built in ../home/ii-session.nix from the
+  # quickshell input ../flake.nix pins directly. Its wrapper only puts
+  # qtdeclarative, qtwayland and qtimageformats on the QML import path, and
+  # these dots import five modules beyond that — `import org.kde.kirigami`,
+  # `org.kde.syntaxhighlighting`, `Qt5Compat.GraphicalEffects`,
+  # `QtPositioning`. Without them the shell dies at load with "module <x> is
+  # not installed" and no bar ever appears.
   #
   # NIXPKGS_QT6_QML_IMPORT_PATH rather than a second wrapper binary around qs:
   # nixpkgs' Qt patch reads this variable, the existing wrapper *prefixes* its
   # own paths onto whatever it already holds, and exporting it in the session
   # therefore adds to the search path instead of replacing it. One line, no
-  # rewriting of the 17 places these dots spell `qs`, and session A never sees
-  # it because it is exported here and nowhere else.
+  # rewriting of the 17 places these dots spell `qs`, and it reaches only
+  # processes started from this session, because it is exported here and
+  # nowhere else.
   #
   # kirigami.unwrapped, not kirigami: the wrapped output is a propagation stub
   # holding nothing but nix-support, so its lib/qt-6/qml does not exist. The
@@ -59,10 +74,10 @@ let
   # QT_PLUGIN_PATH rather than home.packages, for two reasons. A style plugin
   # sitting in the user profile is not found at all: wrapQtAppsHook bakes a
   # fixed plugin path into each wrapped app, and the profile is not on it.
-  # And exporting it here keeps the style out of session A — which selects
-  # Breeze explicitly (../home/qt.nix writes widgetStyle=Breeze into
-  # ~/.config/kdeglobals), so a visible Darkly there would be a change nobody
-  # asked for. The hook *prefixes* its own entries onto QT_PLUGIN_PATH rather
+  # And exporting it here rather than globally keeps the style scoped to this
+  # session, so Qt apps started from anywhere else stay on the Breeze that
+  # ../home/qt.nix writes into kdeglobals as widgetStyle. The hook *prefixes*
+  # its own entries onto QT_PLUGIN_PATH rather
   # than replacing it, so this adds to the search path instead of breaking
   # every other plugin — the same property NIXPKGS_QT6_QML_IMPORT_PATH relies
   # on below.
@@ -107,6 +122,18 @@ let
     exec ${config.programs.hyprland.package}/bin/start-hyprland
   '';
 
+  # The Hyprland package's own greeter entries, minus the uwsm one. See the
+  # sessionPackages assignment below for why this exists at all.
+  hyprlandSessionsNoUwsm = pkgs.runCommand "hyprland-sessions-no-uwsm" {
+    passthru.providedSessions = [ "hyprland" ];
+  } ''
+    mkdir -p $out/share/wayland-sessions
+    cp ${config.programs.hyprland.package}/share/wayland-sessions/*.desktop \
+      $out/share/wayland-sessions/
+    test -f $out/share/wayland-sessions/hyprland-uwsm.desktop
+    rm $out/share/wayland-sessions/hyprland-uwsm.desktop
+  '';
+
   # providedSessions must name the .desktop file without its extension —
   # services.displayManager.sessionPackages type-checks for that attribute and
   # rejects a plain derivation ("package with provided sessions").
@@ -127,24 +154,44 @@ let
   });
 in
 {
-  # ── The third entry in the greeter.
+  # ── What the greeter lists.
   #
-  # The other two ("Hyprland" and "Hyprland (uwsm-managed)") ship inside the
-  # Hyprland package itself; sessionPackages is how a session that isn't part
-  # of a package gets listed. defaultSession stays hyprland-uwsm in ./sddm.nix
-  # on purpose — if this session fails to come up, the greeter still offers the
-  # working one rather than looping on a broken default. SDDM does remember the
-  # last session per user, so after picking this one it will be preselected.
-  services.displayManager.sessionPackages = [ session ];
+  # Two entries: this session (the default, see ./sddm.nix) and the plain
+  # "Hyprland" that ships in the Hyprland package, kept as the rollback — if
+  # this session fails to come up, there is still something to log into.
+  #
+  # The third one the package ships, "Hyprland (uwsm-managed)", is removed
+  # here. Turning off programs.hyprland.withUWSM in ./package.nix is NOT what
+  # removes it, contrary to what that option's name suggests: the entry lives
+  # in the Hyprland package's own share/wayland-sessions, its TryExec is an
+  # absolute store path that resolves whether or not programs.uwsm is on, and
+  # the greeter's session list is built by lndir-ing that whole directory
+  # (nixos/modules/services/display-managers/default.nix:38-39) rather than by
+  # consulting passthru.providedSessions, which is only validated against.
+  # So the entry survived both, and clicking it would start a compositor with
+  # no shell on top of it.
+  #
+  # Hence the filtered copy plus mkForce. lndir-and-delete rather than naming
+  # the one file to keep, so a session Hyprland adds later still comes
+  # through; the `test -f` makes the build fail loudly if upstream renames the
+  # uwsm entry instead of silently keeping it.
+  #
+  # mkForce because programs.hyprland sets sessionPackages = [ cfg.package ]
+  # at normal priority (hyprland.nix:107) and lists merge — without it the
+  # unfiltered package would simply be added back alongside this one.
+  services.displayManager.sessionPackages = lib.mkForce [
+    session
+    hyprlandSessionsNoUwsm
+  ];
 
   # ── hyprlock.
   #
-  # The caelestia session locks with its own QML locker, which points PAM at a
-  # config dir inside its package and so never needed an /etc/pam.d entry (see
-  # the note in ./hyprland-desktop.nix). ii locks with hyprlock, which does:
-  # without this option there is no pam.d/hyprlock and the lock screen refuses
-  # every password. Enabling it adds the PAM entry and the binary and changes
-  # nothing for session A.
+  # This session locks with hyprlock, which authenticates through
+  # /etc/pam.d/hyprlock: without this option there is no such file and the
+  # lock screen refuses every password. Enabling it adds the PAM entry and the
+  # binary. See the note in ./hyprland-desktop.nix for why that file used to
+  # say no PAM entry was needed at all — that was about a different locker,
+  # from a session that no longer exists.
   programs.hyprlock.enable = true;
 
   # ── Fonts, system-wide rather than in home.packages.

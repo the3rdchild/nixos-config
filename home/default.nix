@@ -8,7 +8,6 @@
     ./kitty.nix
     ./mime.nix
     ./zen.nix
-    ./caelestia.nix
     ./ii-session.nix
     ./themes.nix
     ./qt.nix

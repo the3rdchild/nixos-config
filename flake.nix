@@ -13,43 +13,33 @@
     # Reference/acer-aspire-A715-79G/acer-ec and modules/acer-ec.nix reaches it
     # by relative path. See the comment there.
 
-    # ── Caelestia, in two halves.
+    # ── quickshell, the runtime the session B shells are written against.
     #
-    # The shell is a quickshell app with a real flake: it exports
-    # homeManagerModules.default (-> programs.caelestia) and pins its own
-    # quickshell, which MUST be the git version — nixpkgs' tagged
-    # quickshell is too old to build it.
+    # `qs` — the binary ii and end4-pC actually run. It used to arrive as a
+    # transitive input of the caelestia shell's flake, which is why dropping
+    # that session could not simply delete it: session B was running
+    # caelestia's quickshell all along. This is the same rev that input
+    # resolved to (0.3.1), so the store path is unchanged by the move.
     #
-    # Pinned to a release tag, not `main`. home/caelestia.nix patches five
-    # upstream files with --replace-fail anchors and adds a nexus Display page
-    # written against upstream's own row components, so every bump has to be
-    # read before it is taken — a tag is a thing you can diff against, a moving
-    # branch is not. Reference/release holds the extracted tree of the pinned
-    # tag (REVISION matches the rev below) for exactly that check.
+    # git.outfoxxed.me, not the GitHub mirror, because that is where the rev
+    # was locked from and re-pointing it would relock to a different node for
+    # the same commit. nixpkgs' tagged quickshell is 0.3.0 and is NOT a
+    # substitute: these dots are verified against 0.3.1 only.
     #
-    # The tag string here is also what nexus → About reports: home/caelestia.nix
-    # reads `ref` back out of flake.lock to override upstream's hardcoded
-    # `version = "1.0.0"` placeholder. Changing this line and re-locking is
-    # enough; there is no second copy of the version to keep in sync.
-    caelestia-shell = {
-      url = "github:caelestia-dots/shell/v2.4.0";
+    # Deliberately NOT the rev end-4's own sdata/dist-nix pins
+    # (7511545e, 2026-03-19). That is six months older than this, and the
+    # session has only ever been run on 0.3.1.
+    quickshell = {
+      url = "git+https://git.outfoxxed.me/outfoxxed/quickshell?ref=refs/heads/master&rev=0fed22a2c47d9568ddf13cf61586b3f2ac4378a2";
       inputs.nixpkgs.follows = "nixpkgs";
-    };
-
-    # The dots are plain config files with no flake of their own, so they
-    # come in as a bare source tree. home/caelestia.nix derives a patched
-    # copy from it — upstream hardcodes a few FHS paths.
-    caelestia-dots = {
-      url = "github:caelestia-dots/caelestia";
-      flake = false;
     };
 
     # ── illogical-impulse (end-4) + the end4-pC fork, for the second session.
     #
     # Two halves again, and neither has a flake: both are plain config trees
     # that ../home/ii-session.nix patches into a single derivation. They only
-    # ever feed session B ("Hyprland (illogical-impulse)"); nothing here
-    # touches the caelestia session.
+    # ever feed session B ("Hyprland (illogical-impulse)"), which since the
+    # caelestia session was dropped is the only session there is.
     #
     # type = "git" + submodules = 1, NOT the shorter github: form. The tree
     # carries one submodule — dots/.config/quickshell/ii/modules/common/
@@ -75,8 +65,7 @@
     # rest of the install: the hypr Lua config, the Python venv, the matugen
     # templates and the fonts.
     #
-    # No tags at all upstream, so a rev is the only thing to pin to — same
-    # situation as hyprmod below.
+    # No tags at all upstream, so a rev is the only thing to pin to.
     end4-pc = {
       url = "github:pctrade/end4-pC/da31320c85500eb130b0011474c917751d41b29a";
       flake = false;
@@ -91,7 +80,7 @@
     # LatexRenderer.qml to the store path; without it every $$...$$ in an AI
     # reply renders as nothing at all, silently.
     #
-    # No tags upstream, so a rev — same as end4-pc and hyprmod above. The
+    # No tags upstream, so a rev — same as end4-pc above. The
     # build follows upstream's own Arch PKGBUILD (sdata/dist-arch/
     # illogical-impulse-microtex-git) except for its two seds: this rev already
     # carries the tinyxml2 soname fix, and nixpkgs still has gtksourceviewmm 3,
@@ -101,30 +90,12 @@
       flake = false;
     };
 
-    # ── HyprMod, the GTK4 settings GUI for the compositor.
-    #
-    # Not in nixpkgs. The flake exports packages.default and its derivation
-    # wraps lua5_4 onto PATH, which its config reader needs to execute a
-    # Lua-mode config.
-    #
-    # Pinned by rev rather than tag on purpose: the Nix packaging landed
-    # AFTER the v0.4.0 tag — nix/hyprmod.nix and flake.nix don't exist at
-    # v0.4.0 at all — so there is no tag that can be built. A rev is still a
-    # thing you can diff against; re-pin it when bumping rather than letting
-    # `main` float, because the one thing that matters here (first-run setup
-    # wanting to write to hyprland.lua — see hypr-user.lua in
-    # home/caelestia.nix) is upstream behaviour that could change silently.
-    hyprmod = {
-      url = "github:BlueManCZ/hyprmod/c1edad16510538190f65cde0f27fc2825045ce04";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
-
     # ── SilentSDDM, the login screen theme.
     #
     # Not in nixpkgs. The flake exports nixosModules.default
     # (-> programs.silentSDDM), which builds the theme with the chosen preset,
     # settings overrides and extra backgrounds baked into the store path.
-    # Pinned to a release tag for the same reason as caelestia-shell: the
+    # Pinned to a release tag rather than a branch: the
     # module forces sddm options (theme, wayland.enable, GreeterEnvironment)
     # that modules/sddm.nix has to agree with, so bumps should be read first.
     silent-sddm = {

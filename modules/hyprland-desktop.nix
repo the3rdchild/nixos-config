@@ -1,16 +1,16 @@
 { config, inputs, pkgs, ... }:
 {
-  # ── System-level support for the caelestia dots.
+  # ── System-level support shared by every Hyprland session on this machine.
   #
-  # The Hyprland package/session itself is enabled in ./package.nix; this
-  # module only adds what has to exist outside home-manager. The per-user
-  # half — the shell, the hypr Lua config, the app configs — lives in
-  # ../home/caelestia.nix.
+  # The Hyprland package/session itself is enabled in ./package.nix, and the
+  # session that actually runs is defined in ./ii-session.nix; this module
+  # only adds what has to exist outside home-manager and is not specific to
+  # either — the portal stack, a dconf backend and its schemas, a polkit
+  # policy daemon, geoclue, ydotool, and the CTRL+ESC keyd remap.
   #
-  # Unlike the JaKooLit setup this replaced, ~/.config/hypr IS managed
-  # declaratively now. Caelestia keeps its mutable state out of the config
-  # tree (~/.local/state/caelestia) and confines runtime writes to
-  # hypr/scheme/current.lua, so per-file symlinks work.
+  # It was written as "system-level support for the caelestia dots" and
+  # renamed when that session was dropped. Nothing in it was caelestia-
+  # specific; the per-user half that was lives in git history.
 
   # execs.lua drives cursor + GTK appearance through `gsettings`, which
   # needs a dconf backend to persist anything.
@@ -52,9 +52,8 @@
     "${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}"
   ];
 
-  # The polkit-gnome agent (services.polkit-gnome under UWSM, execs.lua in the
-  # plain session; see ../home/caelestia.nix) is only a client. The policy
-  # daemon it talks to still has to be running.
+  # The polkit agent the session starts from its own execs.lua is only a
+  # client. The policy daemon it talks to still has to be running.
   security.polkit.enable = true;
 
   # gammastep's auto-location. The demo agent execs.lua launches is only the
@@ -83,7 +82,7 @@
   # layer for the duration of ESC's depression, so CTRL is genuinely released.
   # Press order therefore matters: CTRL first, then ESC, holding both.
   #
-  # Conflict check (Aug 2026): nothing in caelestia's keybinds.lua or this
+  # Conflict check (Aug 2026): nothing in the session's keybinds.lua or this
   # config uses CTRL+ESC. The one ESC bind that exists is CTRL+SHIFT+Escape
   # (kbSystemMonitorWs, variables.lua:87). keyd resolves chords through
   # composite layers in activation order, so SHIFT-then-CTRL-then-ESC would
@@ -107,20 +106,21 @@
     };
   };
 
-  # NOTE: the lock screen does NOT need a security.pam.services entry. It
-  # points PAM at its own config dir inside the package
-  # (Quickshell.shellPath("assets/pam.d") in modules/lock/Pam.qml) rather
-  # than /etc/pam.d, and authenticates via pam_unix + the setuid
-  # unix_chkpwd helper NixOS already provides in /run/wrappers.
+  # NOTE: the lock screen DOES need a PAM entry, and it is not here —
+  # ./ii-session.nix sets programs.hyprlock.enable, which adds pam.d/hyprlock
+  # along with the binary. This note used to say the opposite, and correctly
+  # so: the caelestia session locked with a QML locker that pointed PAM at a
+  # config dir inside its own package. That locker is gone; do not carry its
+  # conclusion over to hyprlock, which refuses every password without the
+  # /etc/pam.d entry.
 
-  # No polkit_gnome here. Both ways the agent is started run it by store path
-  # (the home-manager unit and the execs.lua patch in ../home/caelestia.nix),
-  # so the package never had to be on the system profile. Having it there
-  # put its XDG autostart entry in /run/current-system/sw/etc/xdg/autostart.
-  # Under UWSM that entry actually runs (xdg-desktop-autostart.target), loses
-  # the race to the agent that is already registered ("An authentication
-  # agent already exists for the given subject"), and leaves a failed user
-  # unit behind on every login.
+  # No polkit_gnome here. The agent is started by store path from the
+  # session's own execs.lua, so the package never had to be on the system
+  # profile. Having it there put its XDG autostart entry in
+  # /run/current-system/sw/etc/xdg/autostart, which under a UWSM session
+  # actually runs (xdg-desktop-autostart.target), loses the race to the agent
+  # that is already registered ("An authentication agent already exists for
+  # the given subject"), and leaves a failed user unit behind on every login.
   environment.systemPackages = with pkgs; [
     xdg-desktop-portal-hyprland
     xdg-desktop-portal-gtk # Settings backend (colour scheme); see ../home/vscode.nix

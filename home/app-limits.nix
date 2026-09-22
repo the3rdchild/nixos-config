@@ -7,7 +7,7 @@
   #
   # Zen is the largest single consumer on this machine — observed growing from
   # 3.8 GB to 4.8 GB over one session, against 15 GB of RAM shared with VS Code
-  # and the caelestia shell. It is installed as a Flatpak
+  # and the quickshell session. It is installed as a Flatpak
   # (app.zen_browser.zen), and flatpak already runs every app in its own
   # transient scope under app.slice, so the limits attach to a cgroup that
   # exists rather than needing a wrapper script or a rewritten .desktop entry.
@@ -41,8 +41,15 @@
   # here (journal and live units, 2026-09-16):
   #
   #   app-Hyprland-<desktop id or command>-<8 hex>.scope    [Scope]
-  #     `uwsm app`, used by the caelestia launcher (patched in ./caelestia.nix),
-  #     the SUPER+SHIFT+V bind and Dolphin's "Open with VS Code".
+  #     `uwsm app`, used by the caelestia session's launcher, its SUPER+SHIFT+V
+  #     bind and Dolphin's "Open with VS Code".
+  #
+  #     DEAD as of the caelestia drop: ../modules/package.nix now sets
+  #     withUWSM = false, and the surviving session never ran under uwsm
+  #     anyway, so nothing creates these scopes and the drop-ins named after
+  #     them attach to nothing. They are kept rather than deleted because
+  #     putting that session under uwsm is the one change that brings the VS
+  #     Code cap back, and this is the shape it has to match when it does.
   #
   #   app-<CHROME_DESKTOP id>-<pid>.scope                   [Scope]
   #     Created by Electron/Chromium apps themselves, which move their main
