@@ -49,7 +49,6 @@ pkgs.writeShellScriptBin "ii-zen-accent" ''
     pkgs.diffutils
     pkgs.gnused
     pkgs.procps
-    pkgs.libnotify
     pkgs.systemd
   ]}:/run/current-system/sw/bin
 
@@ -146,23 +145,24 @@ pkgs.writeShellScriptBin "ii-zen-accent" ''
       echo "}"
     } > "$tmp"
 
-    # Unchanged palette, nothing to say. Without this every regeneration that
-    # did not actually move a colour would still fire a notification, and
-    # switchwall regenerates on more occasions than a wallpaper change.
+    # Unchanged palette, nothing to do. This matters more than it looks:
+    # switchwall regenerates on more occasions than a wallpaper change, and
+    # with auto-restart on, every one of those would otherwise be a browser
+    # restart for a file whose bytes did not move.
     if [ -f "$out" ] && cmp -s "$tmp" "$out"; then
       rm -f "$tmp"
       return 0
     fi
     mv "$tmp" "$out"
 
+    # Auto-restart off is a silent no-op by design — the CSS is on disk and
+    # the next time Zen starts for its own reasons it picks the new accent
+    # up. There used to be a notify-send here saying so; it was dropped as
+    # noise, since the only actionable thing it ever said was the name of
+    # the command that turns this branch off.
     [ -n "$(zen_pid)" ] || return 0
     if [ "$force_restart" = "1" ] || [ "$(restart_state)" = "on" ]; then
       restart_zen
-    else
-      notify-send -a Zen -i app.zen_browser.zen \
-        "Zen: aksen wallpaper diperbarui" \
-        "Buka ulang Zen untuk menerapkannya, atau \`ii-zen-accent auto on\` agar otomatis." \
-        2>/dev/null || true
     fi
   }
 
