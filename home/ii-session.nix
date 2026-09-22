@@ -605,6 +605,40 @@ ACTIVATE
         'if [[ -z "$mode_flag" ]]; then' \
         'mode_flag="$(${autoLightDark} "$imgpath" "$mode_flag")"
         if [[ -z "$mode_flag" ]]; then'
+
+      # ── And the write that decision turns into: dconf, not gsettings.
+      #
+      # pre_process() is the only thing that tells the rest of the machine
+      # what mode this wallpaper chose — the portal, GTK, Qt and session A all
+      # read org.gnome.desktop.interface color-scheme and nothing else. It
+      # spelled that write as `gsettings set`, which on a session with no
+      # schemas on XDG_DATA_DIRS exits 1 and prints "No schemas installed" to
+      # a stderr nobody reads. ../modules/hyprland-desktop.nix now puts the
+      # schemas there, so this is no longer load-bearing — but the failure it
+      # covers took months to notice precisely because it was silent, and
+      # dconf removes the dependency rather than satisfying it. Same database,
+      # same D-Bus change notification, no schema lookup; it is what
+      # ../home/qt.nix and the autoLightDark helper above already use, for the
+      # reasons spelled out there.
+      #
+      # sed rather than substituteInPlace, and on one line at a time: the two
+      # writes sit inside an if/elif whose common indentation Nix would strip
+      # from a multi-line anchor. The capture carries the value, so one
+      # expression covers prefer-dark and prefer-light without naming either.
+      #
+      # dconf takes a GVariant, so a string value needs its quotes inside the
+      # argument: "'prefer-dark'", not 'prefer-dark'.
+      before=$(grep -c "gsettings set org.gnome.desktop.interface" "$f" || true)
+      [ "$before" = "4" ] || {
+        echo "pre_process: expected 4 gsettings writes, found $before" >&2
+        exit 1
+      }
+      sed -i \
+        -e "s|gsettings set org\.gnome\.desktop\.interface color-scheme '\(.*\)'|${pkgs.dconf}/bin/dconf write /org/gnome/desktop/interface/color-scheme \"'\1'\"|" \
+        -e "s|gsettings set org\.gnome\.desktop\.interface gtk-theme '\(.*\)'|${pkgs.dconf}/bin/dconf write /org/gnome/desktop/interface/gtk-theme \"'\1'\"|" \
+        "$f"
+      [ "$(grep -c "gsettings set org.gnome.desktop.interface" "$f" || true)" = "0" ] || exit 1
+      [ "$(grep -c "dconf write /org/gnome/desktop/interface" "$f" || true)" = "4" ] || exit 1
     done
 
     # ── Clipboard: picking an entry pastes it.

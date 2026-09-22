@@ -16,6 +16,42 @@
   # needs a dconf backend to persist anything.
   programs.dconf.enable = true;
 
+  # ── And the other half of what `gsettings` needs: the schemas.
+  #
+  # A backend is not enough. Without a schema for the key being touched,
+  # gsettings does not fall back to anything — it exits 1 with "No schemas
+  # installed" and, in a script that redirects stderr, in total silence.
+  # That is what every `gsettings` call on this machine did: nothing.
+  #
+  # Nothing put them on XDG_DATA_DIRS. glib.bin is installed and supplies the
+  # `gsettings` binary, but the schemas live in gsettings-desktop-schemas,
+  # which was in neither profile, and neither /run/current-system/sw/share/
+  # glib-2.0/schemas nor .../gsettings-schemas exists. The only reason this
+  # was not obvious everywhere is that wrapGAppsHook bakes the path into each
+  # app's own wrapper, so VS Code and xdg-desktop-portal-gtk kept working
+  # while every bare shell call did not.
+  #
+  # What it cost, before this line existed: switchwall.sh's pre_process()
+  # never wrote org.gnome.desktop.interface color-scheme, so the session mode
+  # froze at whatever had last been written by something using dconf directly
+  # — a black wallpaper left the whole desktop in light mode, the portal told
+  # Zen and VS Code "light", and kde-material-you-colors-wrapper.sh read an
+  # empty mode and picked -l, which is what put Dolphin there too. Twenty call
+  # sites across both shells, all of them org.gnome.desktop.interface, all of
+  # them dead.
+  #
+  # sessionVariables rather than systemPackages: the schemas have to be found
+  # through XDG_DATA_DIRS, and a package in the system profile puts them at
+  # share/gsettings-schemas/<name>/glib-2.0/schemas — a level deeper than the
+  # share/ that is on the path. Naming the directory is the whole fix, and it
+  # keeps the package in the system closure on its own.
+  #
+  # This list merges with the entries NixOS already contributes (the desktops
+  # share dir, then every profile's share/), so nothing is displaced.
+  environment.sessionVariables.XDG_DATA_DIRS = [
+    "${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}"
+  ];
+
   # The polkit-gnome agent (services.polkit-gnome under UWSM, execs.lua in the
   # plain session; see ../home/caelestia.nix) is only a client. The policy
   # daemon it talks to still has to be running.
