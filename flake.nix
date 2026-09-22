@@ -67,7 +67,7 @@
     #
     # No tags at all upstream, so a rev is the only thing to pin to.
     end4-pc = {
-      url = "github:pctrade/end4-pC/da31320c85500eb130b0011474c917751d41b29a";
+      url = "github:pctrade/end4-pC/0ff392bc69bdda1d795819c4bb8ec65e2b3658df";
       flake = false;
     };
 

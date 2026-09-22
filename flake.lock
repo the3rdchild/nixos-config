@@ -23,17 +23,17 @@
     "end4-pc": {
       "flake": false,
       "locked": {
-        "lastModified": 1789940593,
-        "narHash": "sha256-iMtVtoVkcC+Nw9uaESTWmJbDb1RHM23wforzrH15GsQ=",
+        "lastModified": 1790071125,
+        "narHash": "sha256-we4oqYAK37hBY1m6JACVRrYa80q9B6zigPdMeRn0SZQ=",
         "owner": "pctrade",
         "repo": "end4-pC",
-        "rev": "da31320c85500eb130b0011474c917751d41b29a",
+        "rev": "0ff392bc69bdda1d795819c4bb8ec65e2b3658df",
         "type": "github"
       },
       "original": {
         "owner": "pctrade",
         "repo": "end4-pC",
-        "rev": "da31320c85500eb130b0011474c917751d41b29a",
+        "rev": "0ff392bc69bdda1d795819c4bb8ec65e2b3658df",
         "type": "github"
       }
     },
