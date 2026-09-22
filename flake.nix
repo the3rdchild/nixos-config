@@ -82,6 +82,25 @@
       flake = false;
     };
 
+    # ── MicroTeX, the LaTeX renderer the AI chat shells out to.
+    #
+    # Not in nixpkgs, and not upstream's MicroTeX either: both shells run
+    # `cd <dir> && ./LaTeX -headless`, and the `LaTeX` binary with that CLI is
+    # end-4's fork (NanoMichael's tree has no -headless sample). ../home/
+    # ii-session.nix builds it and rewrites the hardcoded /opt/MicroTeX in
+    # LatexRenderer.qml to the store path; without it every $$...$$ in an AI
+    # reply renders as nothing at all, silently.
+    #
+    # No tags upstream, so a rev — same as end4-pc and hyprmod above. The
+    # build follows upstream's own Arch PKGBUILD (sdata/dist-arch/
+    # illogical-impulse-microtex-git) except for its two seds: this rev already
+    # carries the tinyxml2 soname fix, and nixpkgs still has gtksourceviewmm 3,
+    # so the gtksourceviewmm-4.0 rewrite Arch needs would only break it here.
+    microtex = {
+      url = "github:end-4/MicroTeX/e8c6e58b1306119e51297b02f0b449fa7300416d";
+      flake = false;
+    };
+
     # ── HyprMod, the GTK4 settings GUI for the compositor.
     #
     # Not in nixpkgs. The flake exports packages.default and its derivation

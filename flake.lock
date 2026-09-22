@@ -164,6 +164,23 @@
         "type": "github"
       }
     },
+    "microtex": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1780642044,
+        "narHash": "sha256-AxzSroxu6hSBaW40TJWttfIFgTAVHg1beC2qPEQPayE=",
+        "owner": "end-4",
+        "repo": "MicroTeX",
+        "rev": "e8c6e58b1306119e51297b02f0b449fa7300416d",
+        "type": "github"
+      },
+      "original": {
+        "owner": "end-4",
+        "repo": "MicroTeX",
+        "rev": "e8c6e58b1306119e51297b02f0b449fa7300416d",
+        "type": "github"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1784796856,
@@ -209,6 +226,7 @@
         "end4-pc": "end4-pc",
         "home-manager": "home-manager",
         "hyprmod": "hyprmod",
+        "microtex": "microtex",
         "nixpkgs": "nixpkgs",
         "silent-sddm": "silent-sddm"
       }

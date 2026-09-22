@@ -50,9 +50,42 @@ let
     pkgs.kdePackages.syntax-highlighting # org.kde.syntaxhighlighting
   ];
 
+  # ── Darkly, the Qt widget style these dots select.
+  #
+  # The kdeglobals ii ships says `widgetStyle=Darkly` (kdeglobals:152) and it
+  # ships a darklyrc beside it, but the style itself was never installed, so
+  # every Qt app in session B silently fell back to Breeze.
+  #
+  # QT_PLUGIN_PATH rather than home.packages, for two reasons. A style plugin
+  # sitting in the user profile is not found at all: wrapQtAppsHook bakes a
+  # fixed plugin path into each wrapped app, and the profile is not on it.
+  # And exporting it here keeps the style out of session A — which selects
+  # Breeze explicitly (../home/qt.nix writes widgetStyle=Breeze into
+  # ~/.config/kdeglobals), so a visible Darkly there would be a change nobody
+  # asked for. The hook *prefixes* its own entries onto QT_PLUGIN_PATH rather
+  # than replacing it, so this adds to the search path instead of breaking
+  # every other plugin — the same property NIXPKGS_QT6_QML_IMPORT_PATH relies
+  # on below.
+  #
+  # Qt6 only: darkly-qt5 was removed from nixpkgs over its KF5 dependencies,
+  # so Qt5 apps here keep falling back. Nothing in these dots is Qt5.
+  #
+  # kimageformats rides along for the same reason it would otherwise be
+  # unreachable. The dolphinrc these dots ship lists `avif` among its
+  # thumbnail plugins (dolphinrc:18), and upstream's Arch dependency list
+  # names qt6-avif-image-plugin for it — which has no nixpkgs package of that
+  # name, but is exactly what kimg_avif.so inside kimageformats is. Same
+  # plugin directory, same variable, so it is one more entry here rather than
+  # a second mechanism.
+  qtPluginPath = lib.concatMapStringsSep ":" (p: "${p}/lib/qt-6/plugins") [
+    pkgs.darkly
+    pkgs.kdePackages.kimageformats
+  ];
+
   launcher = pkgs.writeShellScriptBin "start-hyprland-ii" ''
     export XDG_CONFIG_HOME="$HOME/${cfgDirName}"
     export NIXPKGS_QT6_QML_IMPORT_PATH="${qmlPath}''${NIXPKGS_QT6_QML_IMPORT_PATH:+:$NIXPKGS_QT6_QML_IMPORT_PATH}"
+    export QT_PLUGIN_PATH="${qtPluginPath}''${QT_PLUGIN_PATH:+:$QT_PLUGIN_PATH}"
     exec ${config.programs.hyprland.package}/bin/start-hyprland
   '';
 

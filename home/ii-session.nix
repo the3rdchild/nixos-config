@@ -190,6 +190,74 @@ ACTIVATE
     patchShebangs --host $out/bin/plasma-apply-colorscheme
   '';
 
+  # ── MicroTeX, the LaTeX renderer.
+  #
+  # Both shells render $$...$$ in an AI reply by shelling out to
+  # `cd <microtexBinaryDir> && ./LaTeX -headless -input=... -output=<x>.svg`
+  # (services/LatexRenderer.qml:24,60). The `cd` is not incidental: the binary
+  # resolves its font metrics through tex::RES_BASE, which is the literal
+  # relative string "res" (src/latex.cpp:14) and which the sample's CLI does
+  # not expose — so the binary and its res/ tree have to sit in one directory
+  # and that directory has to be the working directory. Hence the /opt-shaped
+  # layout below: it is the one thing the QML already knows how to use, and
+  # the patch in `dots` only has to move the path, not the mechanism.
+  #
+  # The build is upstream's own PKGBUILD minus its two seds. Its
+  # tinyxml2.so.10 -> .11 rewrite is against a hardcoded soname this rev no
+  # longer has, and its gtksourceviewmm-3.0 -> 4.0 rewrite exists because Arch
+  # dropped the gtkmm3-era bindings; nixpkgs still ships them, so applying it
+  # would be the thing that breaks the build rather than fixes it.
+  #
+  # gtksourceview3 alongside gtksourceviewmm: the C++ bindings' .pc file
+  # Requires: the C library's, and pkg-config fails the whole lookup — with
+  # "Package 'gtksourceview-3.0' ... not found", not a missing-header error —
+  # if only the bindings are present.
+  microtex = pkgs.stdenv.mkDerivation {
+    pname = "microtex";
+    version = "0-unstable-2026-06-05";
+    src = inputs.microtex;
+
+    nativeBuildInputs = with pkgs; [ cmake pkg-config ];
+    buildInputs = with pkgs; [
+      tinyxml-2
+      gtkmm3
+      gtksourceviewmm
+      gtksourceview3
+      cairomm
+      fontconfig
+    ];
+
+    # No install rules in CMakeLists at all — the PKGBUILD copies the two
+    # artefacts out of the build tree by hand, and so does this. cmake's
+    # configure step is what puts res/ next to the binary (`file(COPY res
+    # DESTINATION .)`, CMakeLists.txt:49), so both live in the build dir,
+    # which is where installPhase runs.
+    installPhase = ''
+      runHook preInstall
+      install -Dm0755 LaTeX $out/opt/MicroTeX/LaTeX
+      cp -r res $out/opt/MicroTeX/res
+      runHook postInstall
+    '';
+
+    # The one thing worth checking is the mode the shells actually use, since
+    # a GUI-only build would still install cleanly and fail at runtime with
+    # nothing on screen.
+    doInstallCheck = true;
+    installCheckPhase = ''
+      cd $out/opt/MicroTeX
+      ./LaTeX -headless '-input=\frac{a}{b}' -output=$TMPDIR/check.svg \
+        -textsize=16 -padding=4 -maxwidth=0.85
+      grep -q "<svg" $TMPDIR/check.svg
+    '';
+
+    meta = {
+      description = "LaTeX rendering engine used by the illogical-impulse shells";
+      homepage = "https://github.com/end-4/MicroTeX";
+      license = pkgs.lib.licenses.mit;
+      mainProgram = "LaTeX";
+    };
+  };
+
   # ── Automatic light/dark from the wallpaper.
   #
   # These dots never look at the wallpaper to decide light or dark. The mode
@@ -208,7 +276,23 @@ ACTIVATE
   # wrong for some images and you will want to override it. An explicit
   # --mode still wins: the Settings light/dark buttons keep working as a
   # one-off, and the next wallpaper change re-derives.
-  autoLightDarkThreshold = "0.5";
+  # Calibrated against the torii pair, which is the reference: "torii dark"
+  # measures 0.541 and "torii white" 0.907, so anything in (0.541, 0.907] sorts
+  # them correctly. 0.6 is the low end of that window on purpose — it is the
+  # smallest move from a neutral 0.5 that satisfies the constraint, so it
+  # reclassifies torii dark and nothing else in the current set:
+  #
+  #   wallhaven-vg8y8m  0.051  dark
+  #   Cyrene            0.158  dark
+  #   torii dark        0.541  dark   <- the one this threshold exists for
+  #   Kokomi            0.692  light
+  #   wallhaven-exmppk  0.772  light
+  #   Escoffier         0.792  light
+  #   torii white       0.907  light
+  #
+  # Raising it further (0.72 would also make Kokomi dark) is a taste call, not
+  # a correctness one — this single value is the only thing to edit.
+  autoLightDarkThreshold = "0.6";
 
   autoLightDark = pkgs.writeShellScript "ii-auto-lightdark" ''
     export PATH=${lib.makeBinPath [ pkgs.imagemagick pkgs.gawk pkgs.coreutils ]}
@@ -344,6 +428,21 @@ ACTIVATE
     # env.lua prepends the FHS share dirs to XDG_DATA_DIRS. They don't exist
     # here, and xdg_data_dirs_old already carries the NixOS ones.
     sed -i 's|:/usr/local/share:/usr/share:|:|' $out/.config/hypr/hyprland/env.lua
+
+    # MicroTeX. Both shells hardcode /opt/MicroTeX and then `cd` into it, so
+    # the store path replaces the whole directory and the `cd` still works —
+    # see the derivation above for why the cwd matters. Counted rather than
+    # globbed blindly: this is a silent failure if it misses, because a
+    # missing renderer shows up as an AI reply with a blank where the formula
+    # should be, and nothing in any log.
+    latexRenderers=$(grep -rIl 'microtexBinaryDir' $out/.config/quickshell | wc -l)
+    [ "$latexRenderers" = "2" ] || {
+      echo "LatexRenderer.qml: expected one per shell, found $latexRenderers" >&2
+      exit 1
+    }
+    grep -rIlZ '"/opt/MicroTeX"' $out/.config/quickshell \
+      | xargs -0 -r sed -i 's|"/opt/MicroTeX"|"${microtex}/opt/MicroTeX"|'
+    [ "$(grep -rIo '${microtex}/opt/MicroTeX' $out/.config/quickshell | wc -l)" = "2" ] || exit 1
 
     # ── Which shell starts.
     sed -i 's|hl.env("qsConfig", "ii")|hl.env("qsConfig", "${qsConfig}")|' \
@@ -710,10 +809,17 @@ in {
   # home.packages — so anything already installed by ../home/packages.nix or
   # ../modules/package.nix is deliberately not repeated here.
   #
-  # Not packaged anywhere and therefore missing: microtex (LaTeX rendering in
-  # the shell degrades to nothing), breeze-plus, qt6-avif-image-plugin.
+  # One thing is still missing and packaged nowhere: breeze-plus, a Breeze
+  # fork that kde-material-you-colors offers as an option and falls back to
+  # plain breeze without. microtex used to be on this list too and is built
+  # above now; qt6-avif-image-plugin turned out to be kimageformats under
+  # another name and is on QT_PLUGIN_PATH in ../modules/ii-session.nix.
   home.packages = with pkgs; [
     venv
+    # No microtex here: nothing runs it from PATH. The QML is pointed at its
+    # store path in `dots` above, and that reference is what keeps it alive —
+    # putting it in the profile would only add an ~/.nix-profile/opt/MicroTeX
+    # nobody looks at.
     autoLightDarkCtl # `ii-lightdark-auto [status|on|off|toggle]`
     plasmaApplyColorscheme # see ./ii-plasma-apply-colorscheme.py
 
@@ -731,6 +837,27 @@ in {
     imagemagick
     libqalculate
 
+    # The wallpaper picker. switchwall.sh with no path argument opens
+    # `kdialog --getopenfilename` (scripts/colors/switchwall.sh:415), and so
+    # do the sidebar's "choose image" and Settings' profile-preset import
+    # (SidebarRightContent.qml:102, settings/pages/Profile.qml:541). Without
+    # it every one of those is a no-op that leaves the old wallpaper up.
+    kdePackages.kdialog
+
+    # Video wallpapers. switchwall.sh detects a video by extension and then
+    # needs both: mpvpaper to play it as the background layer, ffmpeg to pull
+    # frame one out as the still that matugen reads the palette from
+    # (switchwall.sh:202-239). It also writes hypr/custom/scripts/
+    # __restore_video_wallpaper.sh, which execs.lua runs on every start — so
+    # missing these is not one dead feature but a dead line in the autostart.
+    mpvpaper
+    ffmpeg
+
+    # "Open Upscayl" on the wallpaper notification (switchwall.sh:82). With it
+    # absent the action falls through to a prompt offering `yay -S`, which on
+    # this machine is advice for a different operating system.
+    upscayl
+
     # Widgets and helpers the shell shells out to.
     wlogout
     hypridle
@@ -742,8 +869,29 @@ in {
     ddcutil
     brightnessctl
     playerctl
-    libcava
+
+    # cava, NOT libcava. Upstream's own nixpkgs mapping says `libcava #cava`
+    # and that mapping is wrong: libcava is the rendering library and ships
+    # include/ and lib/ with no bin/ at all, while MediaControls.qml runs
+    # `["cava", "-p", <raw_output_config>]` (MediaControls.qml:64) and wants
+    # the executable. The visualizer next to the media controls stayed flat
+    # for exactly this reason.
+    cava
     lxqt.pavucontrol-qt
+
+    # execs.lua starts `easyeffects --hide-window --service-mode` on every
+    # session, and both shells carry a quick toggle plus an equalizer page
+    # driving it (services/EasyEffects.qml, scripts/eq/equalizer.sh).
+    easyeffects
+
+    # pactl, for the two places that need to name a PulseAudio source: screen
+    # recording WITH sound picks the monitor source (scripts/videos/
+    # record.sh:23) and SongRec listens on it (scripts/musicRecognition/
+    # recognize-music.sh:22-32). PipeWire answers the protocol here — what is
+    # missing is only the client binary, which lives in this package and
+    # nowhere else. Installing it starts no daemon: ../modules/audio.nix sets
+    # services.pulseaudio.enable = false and that is untouched.
+    pulseaudio
 
     # Screen capture.
     hyprshot
@@ -767,6 +915,17 @@ in {
     rsync
     eza
 
+    # killall. The shellRestart script above carries psmisc on its own private
+    # PATH, but four call sites reach for it from the session's PATH
+    # instead: ConflictKiller.qml:36,40 (`killall kded6`, `killall mako
+    # dunst`), killDialog.qml:92,103 and scripts/keyring/unlock.sh:18.
+    psmisc
+
+    # `file -b --mime-type`, used to decide how to show an attachment in the
+    # AI chat and what icon a directory entry gets (AttachedFileIndicator.qml
+    # :34, DirectoryIcon.qml:33).
+    file
+
     # Qt/GTK theming the dots ship configs for.
     adw-gtk3
     kdePackages.breeze
@@ -774,5 +933,17 @@ in {
     kdePackages.systemsettings
     kdePackages.plasma-nm
     kdePackages.bluedevil
+
+    # kcmshell6, which is how the panel opens the two KCMs above and the user
+    # one: Config.qml:153-157 spells them `kcmshell6 kcm_bluetooth`,
+    # `kcmshell6 kcm_networkmanagement`, `kcmshell6 kcm_users`. plasma-nm and
+    # bluedevil only supply the modules — this supplies the thing that runs
+    # them, and without it those buttons did nothing at all.
+    #
+    # kcmutils, not kde-cli-tools: the name suggests otherwise and every Arch
+    # guide says otherwise, but in this nixpkgs kde-cli-tools' bin/ holds
+    # kioclient, kstart, kde-open and friends with no kcmshell6 among them.
+    # Checked by listing both.
+    kdePackages.kcmutils
   ];
 }
