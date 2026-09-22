@@ -482,6 +482,23 @@ ACTIVATE
       | xargs -0 -r sed -i 's|"/opt/MicroTeX"|"${microtex}/opt/MicroTeX"|'
     [ "$(grep -rIo '${microtex}/opt/MicroTeX' $out/.config/quickshell | wc -l)" = "2" ] || exit 1
 
+    # ── Icon theme, for the half of the colour pipeline that never ran.
+    #
+    # kde-material-you-colors switches the icon theme with the light/dark mode
+    # too, via plasma-changeicons (plasma_utils.py:89-96) — see plasmaTools
+    # above for why that binary now exists at all. The themes upstream names
+    # here are breeze-plus / breeze-plus-dark, which is the one dependency
+    # still packaged nowhere, so the call would find its tool and then fail on
+    # a missing theme. breeze and breeze-dark ship in kdePackages.breeze-icons,
+    # already in home.packages below, and are what breeze-plus forks anyway.
+    #
+    # This is the seed only. config.conf is in mutablePaths, so an install
+    # that already has one keeps it — the live file has to be edited by hand,
+    # which is the same bargain every other entry in that list makes.
+    substituteInPlace $out/.config/kde-material-you-colors/config.conf \
+      --replace-fail 'iconslight = breeze-plus' 'iconslight = breeze' \
+      --replace-fail 'iconsdark = breeze-plus-dark' 'iconsdark = breeze-dark'
+
     # ── Which shell starts.
     sed -i 's|hl.env("qsConfig", "ii")|hl.env("qsConfig", "${qsConfig}")|' \
       $out/.config/hypr/hyprland/variables.lua
@@ -621,6 +638,76 @@ ACTIVATE
       --replace-fail \
         'hl.dsp.exec_cmd("killall ydotool qs quickshell; qs -c $qsConfig &")' \
         'hl.dsp.exec_cmd("${shellRestart}")'
+
+    # ── The four app keys.
+    #
+    # Three of them match session A exactly: ../home/caelestia.nix binds
+    # SUPER+SHIFT+Z and +V at :1288-1289 and SUPER+SHIFT+O at :1310. Muscle
+    # memory is the whole reason the capture keys above were aligned too; an
+    # editor that opens on one session and does nothing on the other is worse
+    # than either choice made consistently.
+    #
+    # The fourth deliberately does NOT match. Session A puts pwvucontrol on
+    # SUPER+B (caelestia.nix:1246); here it is SUPER+SHIFT+B, because SUPER+B
+    # is upstream's second key for the left sidebar and that sidebar is a
+    # thing session A has no equivalent of. Asked for explicitly, and the
+    # asymmetry is the point rather than an oversight.
+    #
+    # SUPER+SHIFT+B was not free either — it is upstream's "Media: Previous
+    # track" (keybinds.lua:135-136). That is the one thing this change costs,
+    # and it costs little: previous-track keeps XF86AudioPrev (:132, the media
+    # key on the external keyboard, which presents a Consumer Control device)
+    # and SUPER+SHIFT+ALT+mouse:275 (:133). Next/play-pause are
+    # untouched.
+    #
+    # A replacement rather than an added bind, in both directions: Hyprland
+    # fires every bind that matches, so an extra SUPER+SHIFT+B would skip a
+    # track every time the volume window opened.
+    #
+    # volume-control-toggle is session A's script (../home/caelestia.nix, the
+    # let block above its keybinds) and is reused verbatim: home.packages is
+    # one profile shared by both sessions, so it is already on PATH here, and
+    # everything it does is hyprctl against whichever compositor is running.
+    # It exists because pwvucontrol is GTK4 with no single-instance handling —
+    # a plain exec stacks a new window on every press.
+    #
+    # sed with N rather than --replace-fail, because this bind spans two lines
+    # and Nix strips the common indentation from a multi-line string, so the
+    # anchor's continuation line would arrive four spaces short of the file's
+    # — the same trap documented at the LauncherSearch patch above. N pulls
+    # the options line into the pattern space and both become one line.
+    # Counted before and after: the anchor is unique, and so is the
+    # description it carries.
+    before=$(grep -c 'hl.bind("SUPER + SHIFT + B", hl.dsp.exec_cmd("playerctl previous"),' \
+      $out/.config/hypr/hyprland/keybinds.lua)
+    [ "$before" = "1" ] || { echo "SUPER+SHIFT+B: expected 1 anchor, found $before" >&2; exit 1; }
+    sed -i '/^hl.bind("SUPER + SHIFT + B", hl.dsp.exec_cmd("playerctl previous"),$/{N;s|.*|hl.bind("SUPER + SHIFT + B", hl.dsp.exec_cmd("volume-control-toggle"), { description = "App: Volume control" })|}' \
+      $out/.config/hypr/hyprland/keybinds.lua
+    grep -q 'hl.bind("SUPER + SHIFT + B", hl.dsp.exec_cmd("volume-control-toggle")' \
+      $out/.config/hypr/hyprland/keybinds.lua
+    [ "$(grep -c 'Media: Previous track' $out/.config/hypr/hyprland/keybinds.lua)" = "0" ] || exit 1
+    # The left sidebar keeps all three of upstream's keys (SUPER+A, +B, +O);
+    # nothing here touches them.
+    [ "$(grep -c 'quickshell:sidebarLeftToggle"' $out/.config/hypr/hyprland/keybinds.lua)" = "3" ] || exit 1
+
+    # Appended rather than substituted: these three replace nothing, and
+    # keybinds.lua is a flat list of top-level statements, so the end of the
+    # file is as good a place as any and reads as ours rather than upstream's.
+    #
+    # `code`, not `uwsm app -- code` as session A spells it. Session B is
+    # deliberately not uwsm (../modules/ii-session.nix says why), so there is
+    # no uwsm session for `uwsm app` to attach to. The cost is real and worth
+    # naming: ../home/app-limits.nix caps VS Code through the
+    # app-Hyprland-code-<hex>.scope that `uwsm app` creates, so VS Code runs
+    # uncapped in this session. Zen is unaffected — flatpak makes its own
+    # transient scope, which is what that file's drop-in actually targets.
+    cat >> $out/.config/hypr/hyprland/keybinds.lua <<'IIBINDS'
+
+--# Apps, aligned with the caelestia session
+hl.bind("SUPER + SHIFT + Z", hl.dsp.exec_cmd("flatpak run app.zen_browser.zen"), { description = "App: Zen browser" })
+hl.bind("SUPER + SHIFT + V", hl.dsp.exec_cmd("code"), { description = "App: VS Code" })
+hl.bind("SUPER + SHIFT + O", hl.dsp.exec_cmd("obsidian"), { description = "App: Obsidian" })
+IIBINDS
 
     # The About page restarts the shell the same broken way.
     for f in $out/.config/quickshell/*/modules/ii/settings/pages/About.qml; do
