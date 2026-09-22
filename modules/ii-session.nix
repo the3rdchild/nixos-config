@@ -77,9 +77,27 @@ let
   # name, but is exactly what kimg_avif.so inside kimageformats is. Same
   # plugin directory, same variable, so it is one more entry here rather than
   # a second mechanism.
+  #
+  # plasma-workspace is the third entry and the odd one: it is here for its
+  # KCMs, not for a style. Config.qml:153-157 opens three settings panels as
+  # `kcmshell6 kcm_bluetooth`, `kcm_networkmanagement` and `kcm_users`, and
+  # kcmshell6 finds a KCM by scanning plasma/kcms/systemsettings under each
+  # plugin path. plasma-nm and bluedevil ship the first two; kcm_users.so
+  # ships only inside plasma-workspace, so that button did nothing. Adding the
+  # directory takes kcmshell6 --list from 8 modules to 26 — verified — and
+  # costs no new store paths, since ../home/ii-session.nix's plasmaTools
+  # explains why plasma-workspace is already in the system closure.
+  #
+  # Safe to put on this variable specifically because of what it does NOT
+  # contain: no platformthemes/, no styles/, no iconengines/. It cannot
+  # displace Darkly or the platform theme. What it does add beyond the KCMs is
+  # kded modules, KIO workers, krunner plugins and Plasma applets — all of
+  # them loaded only by daemons this session does not run, and one of which
+  # (kded6) ii's own ConflictKiller kills on sight.
   qtPluginPath = lib.concatMapStringsSep ":" (p: "${p}/lib/qt-6/plugins") [
     pkgs.darkly
     pkgs.kdePackages.kimageformats
+    pkgs.kdePackages.plasma-workspace
   ];
 
   launcher = pkgs.writeShellScriptBin "start-hyprland-ii" ''

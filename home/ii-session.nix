@@ -174,20 +174,45 @@ ACTIVATE
     exec qs -c "$cfg" -d
   '';
 
-  # ── plasma-apply-colorscheme, without plasma-workspace.
+  # ── The two plasma-workspace tools the colour pipeline shells out to.
   #
-  # The Qt half of the colour pipeline calls this binary and it exists only in
-  # kdePackages.plasma-workspace — 4307 MB of closure for one command, in a
-  # config that deliberately dropped plasma6. ./ii-plasma-apply-colorscheme.py
-  # explains what it does and, more importantly, what it deliberately does not.
-  plasmaApplyColorscheme = pkgs.runCommand "plasma-apply-colorscheme" { } ''
+  # kde-material-you-colors is the Qt half of that pipeline: matugen/templates/
+  # kde/kde-material-you-colors-wrapper.sh runs it on every wallpaper change,
+  # it writes .colors files into ~/.local/share/color-schemes, and then calls
+  # `plasma-apply-colorscheme` to apply one and `plasma-changeicons` to set the
+  # icon theme (plasma_utils.py:89-96). Both live only in
+  # kdePackages.plasma-workspace, and a missing one is exit 127 with the
+  # generation half still succeeding — which reads on screen as "the Qt apps
+  # ignored the wallpaper".
+  #
+  # This used to be a Python stand-in (./ii-plasma-apply-colorscheme.py, now
+  # deleted) written to avoid plasma-workspace's 4307 MB closure. That premise
+  # was wrong: `nix why-depends /run/current-system <plasma-workspace>` walks
+  # system-path -> xdg-desktop-portal-kde -> plasma-workspace, so it is already
+  # in the system closure and adding it costs zero new store paths. Measured,
+  # not assumed: 0 of its 607 closure paths are absent from the running system.
+  #
+  # Symlinks rather than home.packages = [ plasma-workspace ], because what is
+  # NOT wanted is the rest of it — 25 binaries including plasmashell and
+  # startplasma-wayland on PATH, its .desktop entries in the launcher, and its
+  # 8 D-Bus activation services becoming reachable through the profile's
+  # share/dbus-1 (the profile IS in XDG_DATA_DIRS). The systemd units and the
+  # four XDG autostart entries are inert either way — the units are WantedBy
+  # plasma targets a Hyprland session never reaches, and the autostart files
+  # are all OnlyShowIn=KDE.
+  #
+  # A symlink is enough for both: Qt resolves applicationDirPath through
+  # /proc/self/exe, which follows it back to the real store path, so neither
+  # binary loses track of its own resources. Verified by running both through
+  # one.
+  #
+  # plasma-changeicons comes out of libexec/, not bin/ — it is a helper
+  # upstream never meant to be called by hand, and kde-material-you-colors
+  # calls it by bare name off PATH anyway.
+  plasmaTools = pkgs.runCommand "ii-plasma-tools" { } ''
     mkdir -p $out/bin
-    substitute ${./ii-plasma-apply-colorscheme.py} \
-      $out/bin/plasma-apply-colorscheme \
-      --replace-fail '@python@' '${pkgs.python3}/bin/python3' \
-      --replace-fail '@dbusSend@' '${pkgs.dbus}/bin/dbus-send'
-    chmod +x $out/bin/plasma-apply-colorscheme
-    patchShebangs --host $out/bin/plasma-apply-colorscheme
+    ln -s ${pkgs.kdePackages.plasma-workspace}/bin/plasma-apply-colorscheme $out/bin/
+    ln -s ${pkgs.kdePackages.plasma-workspace}/libexec/plasma-changeicons $out/bin/
   '';
 
   # ── MicroTeX, the LaTeX renderer.
@@ -325,6 +350,19 @@ ACTIVATE
     # stop having an effect until `ii-lightdark-auto off`. That is the asked-for
     # behaviour: one switch decides, rather than two that quietly fight.
     img="$1"
+
+    # Not every caller passes an image. switchwall.sh regenerates colours from
+    # several paths — a bare run, --noswitch, the shell re-applying after a
+    # restart — and with no image to measure this used to fall through to
+    # dconf, which re-applied whatever mode was already set. The effect was a
+    # mode that latched: change the wallpaper to a dark one, have anything
+    # regenerate colours without naming it, and the old light mode came back
+    # and stayed. So fall back to the wallpaper the shell actually has
+    # configured before falling back to the previous mode.
+    if [ -z "$img" ] || [ ! -f "$img" ]; then
+      cfg="''${XDG_CONFIG_HOME:-$HOME/.config}/illogical-impulse/config.json"
+      img="$(${pkgs.jq}/bin/jq -r '.background.wallpaperPath // empty' "$cfg" 2>/dev/null)"
+    fi
     [ -n "$img" ] && [ -f "$img" ] || { passthrough; exit 0; }
     case "$img" in
       *.mp4|*.webm|*.mkv|*.avi|*.mov|*.MP4|*.WEBM|*.MKV|*.AVI|*.MOV)
@@ -821,7 +859,7 @@ in {
     # putting it in the profile would only add an ~/.nix-profile/opt/MicroTeX
     # nobody looks at.
     autoLightDarkCtl # `ii-lightdark-auto [status|on|off|toggle]`
-    plasmaApplyColorscheme # see ./ii-plasma-apply-colorscheme.py
+    plasmaTools # plasma-apply-colorscheme + plasma-changeicons, see above
 
     # No fonts here on purpose — they are system-wide in
     # ../modules/ii-session.nix. home-manager advertises profile fonts through
