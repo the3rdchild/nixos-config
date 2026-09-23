@@ -547,6 +547,23 @@ ACTIVATE
     # here, and xdg_data_dirs_old already carries the NixOS ones.
     sed -i 's|:/usr/local/share:/usr/share:|:|' $out/.config/hypr/hyprland/env.lua
 
+    # ── foot: translucent background.
+    #
+    # Upstream's foot.ini carries no [colors] section at all — the palette is
+    # replayed as OSC sequences from the wallpaper-generated sequences.txt (see
+    # ../home/shell.nix and the session's own config.fish), so a [colors]
+    # section appended here collides with nothing. alpha is the one thing OSC
+    # cannot set, which is why it has to live in the file.
+    #
+    # The blur that makes this look like anything is Hyprland's
+    # decoration:blur, not foot's own `blur=yes`: that option needs
+    # ext-background-effect-v1, and Hyprland 0.56 does not implement it.
+    if grep -q '^\[colors\]' $out/.config/foot/foot.ini; then
+      echo "foot.ini: upstream grew a [colors] section — merge alpha into it" >&2
+      exit 1
+    fi
+    printf '\n[colors]\nalpha=0.85\n' >> $out/.config/foot/foot.ini
+
     # MicroTeX. Both shells hardcode /opt/MicroTeX and then `cd` into it, so
     # the store path replaces the whole directory and the `cd` still works —
     # see the derivation above for why the cwd matters. Counted rather than
