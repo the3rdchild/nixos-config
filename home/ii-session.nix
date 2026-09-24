@@ -279,6 +279,47 @@ ACTIVATE
     ln -s ${pkgs.kdePackages.plasma-workspace}/libexec/plasma-changeicons $out/bin/
   '';
 
+  # ── kcmshell6 and systemsettings, able to load the Bluetooth and Network KCMs.
+  #
+  # Both KCMs installed fine and still failed at load, each for a reason the
+  # nixpkgs Plasma module would have hidden and this session does not:
+  #
+  #   kcm_bluetooth          main.qml:22 imports org.kde.bluezqt, which lives
+  #                          in bluez-qt. bluedevil links the C++ library but
+  #                          propagates nothing, so no QML path held it —
+  #                          "module org.kde.bluezqt is not installed".
+  #   kcm_networkmanagement  a QWidgets KCM that finds its main.qml through
+  #                          XDG_DATA_DIRS (share/kcm_networkmanagement/qml).
+  #                          The per-user profile only links the share/ subdirs
+  #                          listed in environment.pathsToLink, and Plasma's
+  #                          module is what normally widens that to all of
+  #                          /share. Not found means an empty QQuickWidget: a
+  #                          fully transparent window and no error at all.
+  #                          Once found, its ConnectionItem.qml needs
+  #                          org.kde.plasma.components (libplasma), which in
+  #                          turn needs org.kde.ksvg.
+  #
+  # Wrapped here rather than put on the session's QML path in
+  # ../modules/ii-session.nix, so libplasma never lands on quickshell's import
+  # path. Verified by running both KCMs with exactly these additions: no QML
+  # errors, and both render.
+  kcmHosts = pkgs.symlinkJoin {
+    name = "ii-kcm-hosts";
+    paths = [ pkgs.kdePackages.kcmutils pkgs.kdePackages.systemsettings ];
+    nativeBuildInputs = [ pkgs.makeWrapper ];
+    postBuild = ''
+      for b in kcmshell6 systemsettings; do
+        wrapProgram $out/bin/$b \
+          --prefix NIXPKGS_QT6_QML_IMPORT_PATH : ${lib.concatMapStringsSep ":" (p: "${p}/lib/qt-6/qml") [
+            pkgs.kdePackages.bluez-qt
+            pkgs.kdePackages.libplasma
+            pkgs.kdePackages.ksvg
+          ]} \
+          --prefix XDG_DATA_DIRS : ${pkgs.kdePackages.plasma-nm}/share
+      done
+    '';
+  };
+
   # ── MicroTeX, the LaTeX renderer.
   #
   # Both shells render $$...$$ in an AI reply by shelling out to
@@ -839,6 +880,17 @@ hl.bind("SUPER + SHIFT + V", hl.dsp.exec_cmd("code"), { description = "App: VS C
 hl.bind("SUPER + SHIFT + O", hl.dsp.exec_cmd("obsidian"), { description = "App: Obsidian" })
 IIBINDS
 
+    # ── Bluetooth pairing agent.
+    #
+    # ../modules/bluetooth.nix enables blueman, but its applet is a D-Bus/
+    # systemd user unit nothing in this session starts, and kded6 — whose
+    # bluedevil module is the other agent — is killed by ConflictKiller.qml.
+    # With no agent, pairing a device that asks for a PIN or confirmation fails
+    # silently. Started from here so it inherits the session's WAYLAND_DISPLAY.
+    sed -i '/^    hl.exec_cmd("easyeffects --hide-window --service-mode")$/a\    hl.exec_cmd("blueman-applet")' \
+      $out/.config/hypr/hyprland/execs.lua
+    grep -q '^    hl.exec_cmd("blueman-applet")$' $out/.config/hypr/hyprland/execs.lua
+
     # The About page restarts the shell the same broken way.
     for f in $out/.config/quickshell/*/modules/ii/settings/pages/About.qml; do
       [ -e "$f" ] || continue
@@ -1242,7 +1294,6 @@ in {
     adw-gtk3
     kdePackages.breeze
     kdePackages.breeze-icons
-    kdePackages.systemsettings
     kdePackages.plasma-nm
     kdePackages.bluedevil
 
@@ -1256,6 +1307,9 @@ in {
     # guide says otherwise, but in this nixpkgs kde-cli-tools' bin/ holds
     # kioclient, kstart, kde-open and friends with no kcmshell6 among them.
     # Checked by listing both.
-    kdePackages.kcmutils
+    #
+    # kcmutils and systemsettings, wrapped so the two KCMs above can load —
+    # see kcmHosts in the let block.
+    kcmHosts
   ];
 }
