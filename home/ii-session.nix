@@ -647,20 +647,47 @@ ACTIVATE
 
     # ── foot: translucent background.
     #
-    # Upstream's foot.ini carries no [colors] section at all — the palette is
+    # Upstream's foot.ini carries no colour section at all — the palette is
     # replayed as OSC sequences from the wallpaper-generated sequences.txt (see
-    # ../home/shell.nix and the session's own config.fish), so a [colors]
-    # section appended here collides with nothing. alpha is the one thing OSC
-    # cannot set, which is why it has to live in the file.
+    # ../home/shell.nix and the session's own config.fish), so a section
+    # appended here collides with nothing. alpha stays in the file because
+    # the sequences cannot keep it: their last OSC 11 carries no alpha, and
+    # foot answers that by resetting alpha to the *active theme's* value
+    # (osc.c, `alpha = term_theme_get(term)->alpha`).
+    #
+    # Hence both theme sections, not one. [colors] was renamed [colors-dark]
+    # in foot 1.26 and warns on every launch; [colors-light] is the theme a
+    # SIGUSR2 or color-theme-switch binding lands on, and without alpha there
+    # the window would go opaque the moment anything switched it.
     #
     # The blur that makes this look like anything is Hyprland's
     # decoration:blur, not foot's own `blur=yes`: that option needs
     # ext-background-effect-v1, and Hyprland 0.56 does not implement it.
-    if grep -q '^\[colors\]' $out/.config/foot/foot.ini; then
-      echo "foot.ini: upstream grew a [colors] section — merge alpha into it" >&2
+    if grep -qE '^\[colors(2|-dark|-light)?\]' $out/.config/foot/foot.ini; then
+      echo "foot.ini: upstream grew a colour section — merge alpha into it" >&2
       exit 1
     fi
-    printf '\n[colors]\nalpha=0.85\n' >> $out/.config/foot/foot.ini
+    printf '\n[colors-dark]\nalpha=0.85\n\n[colors-light]\nalpha=0.85\n' >> $out/.config/foot/foot.ini
+
+    # ── Terminal palette: make the generated copies writable.
+    #
+    # applycolor.sh builds terminal/sequences.txt (and kitty-theme.conf) by
+    # `cp`-ing its template into ~/.local/state and then `sed -i`-ing the
+    # colours in. The template is in the store, so cp hands the copy its
+    # 0444 mode and sed -i keeps it. From the second wallpaper on, the cp
+    # fails on the read-only file, the sed finds no placeholders left, and
+    # the first palette ever generated is what gets pushed to every /dev/pts
+    # and replayed by every new fish — which is why foot never followed a
+    # light/dark switch. `-f` removes the stale read-only copy so an existing
+    # install heals itself; --no-preserve=mode makes the new one 0644.
+    for f in $out/.config/quickshell/*/scripts/colors/applycolor.sh; do
+      substituteInPlace "$f" \
+        --replace-fail 'cp "$SCRIPT_DIR/terminal/' 'cp -f --no-preserve=mode "$SCRIPT_DIR/terminal/'
+      [ "$(grep -c 'cp -f --no-preserve=mode "$SCRIPT_DIR/terminal/' "$f")" = "2" ] || {
+        echo "$f: expected two template copies (kitty + sequences)" >&2
+        exit 1
+      }
+    done
 
     # MicroTeX. Both shells hardcode /opt/MicroTeX and then `cd` into it, so
     # the store path replaces the whole directory and the `cd` still works —
