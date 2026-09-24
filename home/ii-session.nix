@@ -167,6 +167,63 @@ ACTIVATE
       --replace-fail '@python@' '${pythonEnv}'
   '';
 
+  # ── Gemini 3.6 Flash in the AI sidebar.
+  #
+  # Upstream's built-in Gemini entries stop at gemini-3-flash-preview. This one
+  # goes first in the models object, so it is also modelList[0] — the fallback
+  # when Persistent holds no model or one that no longer exists. Same key_id
+  # as the other Gemini entries, so one key in the keyring serves all three.
+  #
+  # Patched into Ai.qml rather than added through config.json's ai.extraModels:
+  # config.json is written by the shell at runtime and holds nothing this repo
+  # seeds, the same reason the capture paths below are QML defaults.
+  #
+  # Checked against the API with a real key: models/gemini-3.6-flash exists
+  # and answers streamGenerateContent, which is the endpoint GeminiApiStrategy
+  # calls.
+  #
+  # ── DeepSeek V4 Flash through gonka24, second.
+  #
+  # An OpenAI-compatible endpoint, so upstream's OpenAiApiStrategy drives it
+  # unchanged, with its key under key_id "gonka24". One thing it needs:
+  # extraParams sends `tools: []`, i.e. no sidebar functions for this model.
+  # OpenAiApiStrategy ignores tool_calls entirely, and this model reaches for
+  # the tools readily — asked a plain question it streamed a run_shell_command
+  # call, which the sidebar would have shown as an empty reply.
+  # tool_choice "none" is no fix here: the model still generates the call and
+  # the provider drops it, again an empty reply (3 of 3 runs). `tools: null` is
+  # rejected ("Expected array"); `[]` answers normally. All tested against the
+  # endpoint with a real key.
+  geminiModel = "gemini-3.6-flash";
+  gonkaModel = "deepseek-v4-flash-0731";
+  aiModelEntries = pkgs.writeText "ii-ai-extra-models" ''
+            "${geminiModel}": aiModelComponent.createObject(this, {
+                "name": "Gemini 3.6 Flash",
+                "icon": "google-gemini-symbolic",
+                "description": Translation.tr("Online | Google's model\nFast, with thinking. Added by the NixOS config."),
+                "homepage": "https://aistudio.google.com",
+                "endpoint": "https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:streamGenerateContent",
+                "model": "${geminiModel}",
+                "requires_key": true,
+                "key_id": "gemini",
+                "key_get_link": "https://aistudio.google.com/app/apikey",
+                "key_get_description": Translation.tr("**Pricing**: free. Data used for training.\n\n**Instructions**: Log into Google account, allow AI Studio to create Google Cloud project or whatever it asks, go back and click Get API key"),
+                "api_format": "gemini",
+            }),
+            "deepseek-v4-flash": aiModelComponent.createObject(this, {
+                "name": "DeepSeek V4 Flash (Gonka)",
+                "icon": "deepseek-symbolic",
+                "description": Translation.tr("Online | DeepSeek's model via gonka24\nOpenAI-compatible endpoint. Sidebar functions are off for this model. Added by the NixOS config."),
+                "homepage": "https://gonka24.com",
+                "endpoint": "https://api.gonka24.com/v1/chat/completions",
+                "model": "${gonkaModel}",
+                "requires_key": true,
+                "key_id": "gonka24",
+                "api_format": "openai",
+                "extraParams": { "tools": [] },
+            }),
+  '';
+
   # ── Where captures go.
   #
   # Both on /mnt/shared rather than under $HOME so the files are reachable from
@@ -891,6 +948,40 @@ IIBINDS
       $out/.config/hypr/hyprland/execs.lua
     grep -q '^    hl.exec_cmd("blueman-applet")$' $out/.config/hypr/hyprland/execs.lua
 
+    # ── Gemini 3.6 Flash and DeepSeek V4 Flash at the top of the sidebar's
+    # model list; Gemini is also the default for a fresh states.json. See
+    # aiModelEntries in the let block.
+    # Nix strips the entries' indentation when it builds the file; put Ai.qml's
+    # back.
+    sed 's/^./        &/' ${aiModelEntries} > $TMPDIR/ai-model-entries
+    for s in ii ${qsConfig}; do
+      sed -i '/^    property var models: Config.options.policies.ai === 2 ? {} : {$/r '"$TMPDIR"'/ai-model-entries' \
+        $out/.config/quickshell/$s/services/Ai.qml
+      grep -q '"model": "${geminiModel}",' $out/.config/quickshell/$s/services/Ai.qml
+      grep -q '"model": "${gonkaModel}",' $out/.config/quickshell/$s/services/Ai.qml
+      substituteInPlace $out/.config/quickshell/$s/modules/common/Persistent.qml \
+        --replace-fail 'property string model: "gemini-2.5-flash"' 'property string model: "${geminiModel}"'
+
+      # A stalled stream must end. Upstream's curl has no timeout at all, and
+      # Gemini under load sometimes stops sending mid-answer while keeping the
+      # connection open: seen here as a request.sh curl still ESTABLISHED four
+      # minutes in with nothing arriving, the message never marked done, the
+      # reply frozen mid-sentence. 90s of silence rather than a total cap, so a
+      # long answer is never cut, and generous because a thinking model can be
+      # quiet for a while before its first chunk. Exit 28 is curl's timeout;
+      # it gets a visible note instead of just ending mid-sentence.
+      substituteInPlace $out/.config/quickshell/$s/services/Ai.qml \
+        --replace-fail 'scriptRequestContent += `curl --no-buffer "''${endpoint}"`' \
+                       'scriptRequestContent += `curl --no-buffer --connect-timeout 15 --speed-limit 1 --speed-time 90 "''${endpoint}"`' \
+        --replace-fail 'const result = requester.currentStrategy.onRequestFinished(requester.message);' \
+                       'const result = requester.currentStrategy.onRequestFinished(requester.message);
+            if (exitCode === 28) {
+                const stallNote = "\n\n*(Stream stalled, no data for 90s. Press regenerate to retry.)*";
+                requester.message.rawContent += stallNote;
+                requester.message.content += stallNote;
+            }'
+    done
+
     # The About page restarts the shell the same broken way.
     for f in $out/.config/quickshell/*/modules/ii/settings/pages/About.qml; do
       [ -e "$f" ] || continue
@@ -1195,6 +1286,10 @@ in {
     wl-clipboard # wl-copy / wl-paste, the other half of every clipboard path
     gnome-keyring # scripts/keyring/unlock.sh; the PAM and D-Bus halves are
                   # system-wide in ../modules/ii-session.nix
+    libsecret # secret-tool: KeyringStorage.qml stores and looks up the AI
+              # sidebar's API keys with it (and scripts/keyring/try_lookup.sh).
+              # Without it `/key` saved nothing and every key read came back
+              # empty, with no error shown.
 
     # Colour pipeline.
     matugen
