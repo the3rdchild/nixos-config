@@ -14,6 +14,7 @@
     ./ii-session.nix
     ./service.nix
     ./setting.nix
+    ./storage.nix
     ./power.nix
     ./memory.nix
     ./user.nix

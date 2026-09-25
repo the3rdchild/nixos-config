@@ -1,32 +1,6 @@
 { config, pkgs, ... }:
 {
-  # ── Garbage collection.
-  #
-  # options was "--max-old-generations 2", which is not a nix-collect-garbage
-  # flag. It has never existed; the only ones that gate on age or count are
-  # --delete-old, --delete-older-than and --max-freed. So the daily timer fired,
-  # nix-collect-garbage rejected the argument, and the unit failed — every day,
-  # silently, since the setting was written:
-  #
-  #   nix-gc-start[284768]: error: unrecognised flag '--max-old-generations'
-  #   nix-gc.service: Failed with result 'exit-code'.
-  #
-  # Nothing was ever collected. By 2026-08-11 that had accumulated 108 system
-  # generations and 103 GB of store across 53122 paths, against 29 GB actually
-  # needed by the five newest generations plus home-manager. Roughly 74 GB of
-  # the store was unreachable garbage that the daily job was supposed to have
-  # taken and never did.
-  #
-  # --delete-older-than keeps a real rollback window rather than a generation
-  # count. 30d is deliberate: the i915/nvidia_drm initrd deadlock in Aug 2026
-  # took several generations of bisecting to pin down, and a too-eager GC would
-  # have deleted the known-good generations that made that possible.
-  nix.gc = {
-    automatic = true;
-    dates = "daily";
-    options = "--delete-older-than 30d";
-  };
-
+  # Garbage collection and store dedupe live in ./storage.nix.
   nix.settings.experimental-features = [ "nix-command" "flakes" ];
   nixpkgs.config.allowUnfree = true;
 
