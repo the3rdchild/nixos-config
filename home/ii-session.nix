@@ -254,7 +254,8 @@ ACTIVATE
   #
   # Current workspace first, then 1, 2, 3, … and the special workspaces last,
   # switching to each so both the workspace slide and each window's popin-out
-  # animation are visible. Releasing any of the keys stops it where it is.
+  # animation are visible. Releasing Q (with SUPER+SHIFT still down) or SUPER
+  # stops it where it is; letting go of SHIFT alone does not.
   #
   # Press and release are two separate exec_cmds, so nothing orders them: on a
   # quick tap the release can land before this script has even started. The
@@ -1078,7 +1079,10 @@ hl.bind("SUPER + SHIFT + Q", function()
     hl.dispatch(hl.dsp.exec_cmd("${closeSequential} start " .. closeSeqToken))
 end, { description = "Window: Close all, one by one (hold)" })
 hl.bind("SUPER + SHIFT + Q", closeSeqStop, { release = true })
-for _, key in ipairs({ "Q", "SUPER_L", "SUPER_R", "SHIFT_L", "SHIFT_R" }) do
+--# Not bare Q or SHIFT_*: a release bind on a plain key swallows its press
+--# even with transparent, so q stopped typing. SUPER_* already carry the same
+--# kind of bind upstream (workspaceNumber, top of this file) without harm.
+for _, key in ipairs({ "SUPER_L", "SUPER_R" }) do
     hl.bind(key, closeSeqStop, { release = true, ignore_mods = true, transparent = true })
 end
 IIBINDS
