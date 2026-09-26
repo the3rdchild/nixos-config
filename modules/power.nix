@@ -13,6 +13,25 @@
   # not /sys/class/power_supply directly.
   services.upower.enable = true;
 
+  # Power off at 12%. Nothing else on this machine suspends or powers down on
+  # its own (see the logind block below and ../home/ii-session.nix), so this
+  # is the one backstop against running the battery flat. System-level on
+  # purpose: it still fires from the greeter, or with the shell crashed.
+  #
+  # UPower only acts while discharging, so on AC 12% means nothing. The three
+  # levels must descend or upower rejects all of them; low/critical only set
+  # UPower's own WarningLevel — the shell's notifications have their own
+  # thresholds (25/20) in config.json.
+  #
+  # The shell's automaticSuspend (18%) had to go for this to work: a suspended
+  # machine checks nothing, so it would have slept straight past 12% to zero.
+  services.upower = {
+    percentageLow = 20;
+    percentageCritical = 15;
+    percentageAction = 12;
+    criticalPowerAction = "PowerOff";
+  };
+
   # power-profiles-daemon is the other half: the shell's three profile buttons
   # are ppd's performance / balanced / power-saver. On this laptop that chain
   # continues into the EC — the acer driver bridges platform_profile, so those
@@ -25,18 +44,17 @@
 
   # ── Power button, lid, and idle behaviour.
   #
-  # logind is the *only* thing arbitrating button/lid actions on this machine:
-  # the session is Hyprland (see ./package.nix) and there is no hypridle.
-  # plasma6 has since been dropped from ./service.nix, so powerdevil is not
-  # installed at all any more. It never took effect here regardless (it only
-  # runs inside a Plasma session), so the stale, hand-edited
-  # ~/.config/powerdevilrc is now simply dead — everything below takes hold
-  # unconditionally.
+  # logind is the *only* thing arbitrating button/lid *actions* on this
+  # machine: the session is Hyprland (see ./package.nix), and plasma6 has
+  # since been dropped from ./service.nix, so powerdevil is not installed at
+  # all any more. The stale, hand-edited ~/.config/powerdevilrc is simply
+  # dead — everything below takes hold unconditionally.
   #
-  # Timed idle behaviour (dim / lock / suspend) is a separate matter: that
-  # lives in the caelestia shell's idle monitors, configured declaratively in
-  # ../home/caelestia.nix (general.idle in shell.json). logind's own
-  # IdleAction stays "ignore" so it never double-sleeps underneath the shell.
+  # The policy is: the machine never sleeps unless asked to. Only the screen
+  # turns off — on lid close, and after idle on battery — and that half lives
+  # in the ii session's Hyprland lid bind and hypridle.conf, both in
+  # ../home/ii-session.nix (displayPower). logind's own IdleAction stays
+  # "ignore" so nothing sleeps underneath that either.
   #
   # NOTE: this is the settings.Login form, not the older per-key options
   # (services.logind.lidSwitch, .powerKey, …). Both still evaluate on this
@@ -58,34 +76,22 @@
     HandleSuspendKey = "ignore";
     HandleHibernateKey = "ignore";
 
-    # Lid behaviour is split by power source. logind picks one of these three
-    # based on state, most specific first:
-    #   HandleLidSwitchDocked        — docked, or >1 display connected
-    #   HandleLidSwitchExternalPower — on AC
-    #   HandleLidSwitch              — everything else (i.e. on battery)
+    # The lid does nothing to the system in any state — on AC, docked, and on
+    # battery alike. logind picks one of these three by state (docked / on AC
+    # / everything else), so all three have to say it.
     #
-    # On AC and docked the lid still does nothing: that is the deliberate
-    # "close it and keep the build running" behaviour this machine was set up
-    # for, and on AC there is no cost to it.
-    #
-    # On battery it now suspends, which is the one case where doing nothing is
-    # expensive. This battery has worn to 64.7% of design (33.99 Wh of 52.51),
-    # so an idle-but-awake machine in a bag or between meetings burns a much
-    # larger share of what is left than it used to. The shell's own idle timer
-    # in ../home/caelestia.nix does eventually suspend on battery, but "lid
-    # shut" is a far more definite signal of intent than an idle countdown,
-    # and it fires immediately instead of after the timeout.
-    #
-    # Suspend here is real S3, not s2idle: /sys/power/mem_sleep reports
-    # "s2idle [deep]", so the selected state is the one that actually cuts
-    # power to the SoC rather than idling in it.
-    HandleLidSwitch = "suspend";
+    # Battery used to suspend here. That was reverted deliberately: closing
+    # the lid must never stop what is running. The cost is real — this battery
+    # has worn to 64.7% of design (33.99 Wh of 52.51), and a lid-shut machine
+    # in a bag now stays up until the screen-off/lock timers and, ultimately,
+    # UPower's 12% poweroff above. The panel itself still goes dark: that is
+    # the Hyprland lid bind in ../home/ii-session.nix, not logind.
+    HandleLidSwitch = "ignore";
     HandleLidSwitchExternalPower = "ignore";
     HandleLidSwitchDocked = "ignore";
 
-    # No timed suspend/hibernate/shutdown from logind, ever. The shell's idle
-    # monitor issues its own `systemctl suspend` on battery (see
-    # ../home/caelestia.nix) — that path is unaffected by this switch.
+    # No timed suspend/hibernate/shutdown from logind, ever — and the ii
+    # session's hypridle no longer suspends either.
     IdleAction = "ignore";
   };
 
@@ -402,9 +408,9 @@
   #
   # The EC drops any manual fan duty and re-applies its own curve when the
   # machine comes back from suspend — the same behaviour ../modules/acer-ec.nix
-  # documents for acer-fan-max. Without this, closing the lid on battery (which
-  # now suspends, see HandleLidSwitch above) and reopening it would silently
-  # leave the dGPU fan spinning again while the profile still said power-saver.
+  # documents for acer-fan-max. Without this, a manual suspend (SUPER+SHIFT+L)
+  # on battery and the resume after it would silently leave the dGPU fan
+  # spinning again while the profile still said power-saver.
   #
   # NOT powerManagement.resumeCommands. That option still exists and still
   # type-checks on this nixpkgs, but nothing consumes it any more: there is no
@@ -431,8 +437,7 @@
     };
   };
 
-  # Manual sleep is deliberately left working — SUPER+SHIFT+L in the caelestia
-  # keybinds still suspends on purpose, as does the battery idle timer's
-  # `systemctl suspend`. Only the *button/lid* paths are off, so sleep.target
-  # / hibernate.target are not masked.
+  # Manual sleep is deliberately left working — SUPER+SHIFT+L in the ii
+  # keybinds still suspends on purpose. Only the *button/lid/idle* paths are
+  # off, so sleep.target / hibernate.target are not masked.
 }
