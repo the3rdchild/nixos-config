@@ -628,9 +628,11 @@ ACTIVATE
       img="$(${pkgs.jq}/bin/jq -r '.background.wallpaperPath // empty' "$cfg" 2>/dev/null)"
     fi
     [ -n "$img" ] && [ -f "$img" ] || { passthrough; exit 0; }
-    case "$img" in
-      *.mp4|*.webm|*.mkv|*.avi|*.mov|*.MP4|*.WEBM|*.MKV|*.AVI|*.MOV)
-        passthrough; exit 0 ;;
+    # A video is measured by its still frame, the same one its palette comes
+    # from (see videoFrame).
+    case "''${img,,}" in
+      *.mp4|*.webm|*.mkv|*.avi|*.mov)
+        img="$(${videoFrame} "$img")" || { passthrough; exit 0; } ;;
     esac
 
     # Mean of the image collapsed to one grey pixel: 0 is black, 1 is white.
@@ -784,6 +786,254 @@ ACTIVATE
         on-timeout = ii-display-power idle-lock
     }
   '';
+
+  # ── Video wallpapers.
+  #
+  # switchwall.sh plays a video wallpaper with mpvpaper on Hyprland's
+  # background layer, and the shell's own wallpaper window — the bottom layer,
+  # just above it — goes transparent to let it through. Everything that needs
+  # a *picture* of the video (the palette, the light/dark measure, the tile in
+  # the selector, the preview while arrowing through it) uses one still frame
+  # instead. Upstream extracted that frame in one place, switchwall.sh, and
+  # only once the video was already being applied, so everything that runs
+  # before that point had nothing to look at: scheme detection fed the .mp4
+  # itself to a Python image loader, the selector never listed videos at all
+  # (Wallpapers.qml's extension list still says "TODO: add videos"), and the
+  # preview showed the thumbnail of whatever wallpaper was already set.
+  #
+  # One helper, so the frame has one name and one recipe wherever it is asked
+  # for. The name is upstream's — <basename>.jpg under hypr/custom/scripts/
+  # mpvpaper_thumbnails, writable because hypr/custom is in mutablePaths —
+  # which keeps background.thumbnailPath meaning what the rest of the shell
+  # already reads it as. First frame, as upstream; redone when the video is
+  # newer than it. Written under a temp name and moved into place, because the
+  # thumbnail pass and switchwall.sh can ask for the same frame at once and the
+  # shell may be reading it. -q:v 2 because this frame is shown full screen,
+  # during the preview and the transition into the video, and ffmpeg's default
+  # JPEG quality is visibly blocky at 1080p.
+  videoFrame = pkgs.writeShellScript "ii-video-frame" ''
+    export PATH=${lib.makeBinPath [ pkgs.ffmpeg pkgs.coreutils ]}
+    src="$1"
+    dir="''${XDG_CONFIG_HOME:-$HOME/.config}/hypr/custom/scripts/mpvpaper_thumbnails"
+    frame="$dir/$(basename "$src").jpg"
+    if [ ! -s "$frame" ] || [ "$src" -nt "$frame" ]; then
+      mkdir -p "$dir"
+      tmp="$frame.$$.jpg"
+      if ! ffmpeg -nostdin -v error -y -i "$src" -frames:v 1 -q:v 2 "$tmp"; then
+        rm -f "$tmp"
+        exit 1
+      fi
+      mv -f "$tmp" "$frame"
+    fi
+    echo "$frame"
+  '';
+
+  # Pause or resume one monitor's video, over the mpv IPC socket switchwall.sh
+  # now opens per output (see the dots patch). The asked-for behaviour is that
+  # the video stops only while a fullscreen window covers it. mpvpaper's own
+  # --auto-pause cannot do that here: it pauses when the compositor stops
+  # sending frame callbacks, and Hyprland does not stop — tested on this
+  # machine, an mpvpaper covered edge to edge by the shell's opaque wallpaper
+  # kept decoding for as long as it ran. The shell already tracks fullscreen
+  # per monitor (for hideWhenFullscreen), so it sends the pause itself. Paused,
+  # the same test used 1 tick of CPU per 2s against 25 playing.
+  #
+  # Waits for the socket, because the shell can ask the moment a wallpaper
+  # goes live, and that is also the moment mpvpaper was spawned; the socket
+  # took ~300ms to appear in testing. A stale one (mpvpaper is killed with -9,
+  # which leaves the file behind) just refuses the connection.
+  mpvpaperCtl = pkgs.writeShellScript "ii-mpvpaper-ctl" ''
+    export PATH=${lib.makeBinPath [ pkgs.socat pkgs.coreutils ]}
+    sock="''${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/mpvpaper-$1.sock"
+    case "''${2:-}" in
+      pause) value=true ;;
+      play)  value=false ;;
+      *) echo "usage: ii-mpvpaper-ctl <monitor> pause|play" >&2; exit 2 ;;
+    esac
+    for _ in $(seq 30); do
+      [ -S "$sock" ] && break
+      sleep 0.1
+    done
+    printf '{"command":["set_property","pause",%s]}\n' "$value" \
+      | socat - "UNIX-CONNECT:$sock" >/dev/null 2>&1 || true
+  '';
+
+  # The QML the dots patch inserts for video wallpapers. Nix strips the common
+  # indentation, so each is re-indented to its insertion point at build time,
+  # the same way aiModelEntries is.
+  videoQml = {
+    # Images.qml, next to its image list.
+    images = pkgs.writeText "ii-video-images.qml" ''
+      readonly property list<string> validVideoExtensions: ["mp4", "webm", "mkv", "avi", "mov"]
+
+      function isVideoByName(name: string): bool {
+          const lower = (name || "").toLowerCase();
+          return validVideoExtensions.some(t => lower.endsWith("." + t));
+      }
+
+      // Where ii-video-frame (NixOS config) puts a video's still frame.
+      function videoFramePath(path: string): string {
+          const name = (path || "").split("/").pop();
+          return Directories.config.replace(/^file:\/\//, "") + "/hypr/custom/scripts/mpvpaper_thumbnails/" + name + ".jpg";
+      }
+    '';
+
+    # Wallpapers.qml. confirmedPath is set by apply() and never cleared, so
+    # after one pick from the selector the background ignored every later
+    # change that did not come through apply() — a wallpaper chosen in the
+    # file dialog, or set by switchwall.sh directly, never appeared. It only
+    # has to bridge the moment before switchwall.sh writes the config; once
+    # the config moves, the config is the truth again.
+    #
+    # requestThumbnails is for the video tiles below: thumbnails are only ever
+    # generated from the selector's "Update thumbnails" button, and nothing
+    # else makes one for a video. One pass covers the whole folder, and the
+    # tiles already reload on thumbnailGenerated, so the first tile to ask is
+    # enough and the rest are dropped while it runs.
+    wallpapers = pkgs.writeText "ii-video-wallpapers.qml" ''
+      property string configuredWallpaperPath: Config.options.background.wallpaperPath
+      onConfiguredWallpaperPathChanged: root.confirmedPath = ""
+
+      function requestThumbnails(size: string) {
+          if (thumbgenProc.running)
+              return;
+          root.generateThumbnail(size);
+      }
+    '';
+
+    # Inside the selector tile's ThumbnailImage: ask for a thumbnail once if a
+    # video has none, and mark video tiles with a play badge. The badge is a
+    # child of the image, so it fades in with it and sits inside its rounded
+    # mask.
+    tile = pkgs.writeText "ii-video-tile.qml" ''
+      readonly property bool isVideo: Images.isVideoByName(sourcePath)
+      property bool videoThumbnailRequested: false
+      onStatusChanged: {
+          if (status !== Image.Error || !isVideo || videoThumbnailRequested)
+              return;
+          videoThumbnailRequested = true;
+          Wallpapers.requestThumbnails(thumbnailSizeName);
+      }
+
+      Rectangle {
+          visible: thumbnailImage.isVideo
+          anchors.right: parent.right
+          anchors.bottom: parent.bottom
+          anchors.margins: 6
+          width: videoBadgeIcon.implicitWidth + 8
+          height: width
+          radius: width / 2
+          color: ColorUtils.transparentize(Appearance.colors.colLayer0, 0.3)
+
+          MaterialSymbol {
+              id: videoBadgeIcon
+              anchors.centerIn: parent
+              text: "play_arrow"
+              iconSize: Appearance.font.pixelSize.normal
+              fill: 1
+              color: Appearance.colors.colOnLayer0
+          }
+      }
+    '';
+
+    # Background.qml, per monitor. Only the applied wallpaper is ever playing
+    # — mpvpaper is started by switchwall.sh, never by a preview — so only
+    # then is there anything behind this window worth revealing. Upstream
+    # revealed for any video path, which during a preview meant going
+    # transparent over a video that was not running. A previewed video, or one
+    # picked but not yet written to the config, now shows its frame like an
+    # image.
+    #
+    # The reveal waits 500ms after the video goes live: switchwall.sh starts
+    # mpvpaper just before it writes the config, and mpvpaper needs a moment
+    # to put up its first frame; revealing at once shows the empty layer
+    # beneath for that moment.
+    #
+    # A video that has never been through the thumbnail pass has no frame
+    # until switchwall.sh extracts it, and it writes thumbnailPath straight
+    # after, so a failed load is retried then.
+    #
+    # The pause keys on the *applied* wallpaper rather than videoIsLive, so
+    # locking the screen over a fullscreen window does not resume a video
+    # nobody can see.
+    background = pkgs.writeText "ii-video-background.qml" ''
+      readonly property bool videoIsLive: bgRoot.wallpaperIsVideo
+          && bgRoot.effectiveWallpaperPath === Config.options.background.wallpaperPath
+      onVideoIsLiveChanged: {
+          if (!bgRoot.videoIsLive) {
+              videoRevealDelay.stop()
+              bgRoot.videoRevealed = false
+          } else if (!transitionAnim.running && !bgRoot.transitionPending) {
+              videoRevealDelay.restart()
+          }
+      }
+      Timer {
+          id: videoRevealDelay
+          interval: 500
+          onTriggered: bgRoot.videoRevealed = bgRoot.videoIsLive
+      }
+
+      property string configuredThumbnailPath: Config.options.background.thumbnailPath
+      onConfiguredThumbnailPathChanged: {
+          if (!bgRoot.wallpaperIsVideo || wallpaper.status !== Image.Error) return
+          wallpaper.source = ""
+          wallpaper.source = bgRoot.wallpaperPath
+      }
+
+      readonly property bool videoPausedForFullscreen: /\.(mp4|webm|mkv|avi|mov)$/i.test(Config.options.background.wallpaperPath)
+          && bgRoot.activeWorkspaceWithFullscreen != undefined
+      onVideoPausedForFullscreenChanged: Quickshell.execDetached([
+          "${mpvpaperCtl}", bgRoot.modelData.name, bgRoot.videoPausedForFullscreen ? "pause" : "play"
+      ])
+    '';
+  };
+
+  # switchwall.sh's video branch, before and after. Upstream wrote the config
+  # first, then started mpvpaper, then extracted the frame and wrote
+  # thumbnailPath — so the shell saw the new wallpaper before the video was
+  # running or its frame existed. Now the frame comes first, then mpvpaper,
+  # then thumbnailPath and wallpaperPath, in the order the shell reads them.
+  # Each mpvpaper also opens the IPC socket mpvpaperCtl talks to.
+  #
+  # Replaced as one block rather than line by line because the reorder moves
+  # lines across each other; the old text is spelled out so any upstream change
+  # to it fails the build instead of applying half a patch.
+  videoSwitch = {
+    old = pkgs.writeText "ii-video-switch-old" ''
+      if [[ -z "$colors_only_flag" ]]; then
+          set_wallpaper_path "$imgpath"
+
+          local video_path="$imgpath"
+          monitors=$(hyprctl monitors -j | jq -r '.[] | .name')
+          for monitor in $monitors; do
+              mpvpaper -o "$VIDEO_OPTS" "$monitor" "$video_path" &
+              sleep 0.1
+          done
+      fi
+
+      thumbnail="$THUMBNAIL_DIR/$(basename "$imgpath").jpg"
+      ffmpeg -y -i "$imgpath" -vframes 1 "$thumbnail" 2>/dev/null
+
+      if [[ -z "$colors_only_flag" ]]; then
+          set_thumbnail_path "$thumbnail"
+      fi
+    '';
+    new = pkgs.writeText "ii-video-switch-new" ''
+      thumbnail="$(${videoFrame} "$imgpath")"
+
+      if [[ -z "$colors_only_flag" ]]; then
+          local video_path="$imgpath"
+          monitors=$(hyprctl monitors -j | jq -r '.[] | .name')
+          for monitor in $monitors; do
+              mpvpaper -o "$VIDEO_OPTS input-ipc-server=$XDG_RUNTIME_DIR/mpvpaper-$monitor.sock" "$monitor" "$video_path" &
+              sleep 0.1
+          done
+
+          set_thumbnail_path "$thumbnail"
+          set_wallpaper_path "$imgpath"
+      fi
+    '';
+  };
 
   # ── The merged, patched config tree.
   #
@@ -1078,6 +1328,117 @@ ACTIVATE
       [ "$(grep -c "gsettings set org.gnome.desktop.interface" "$f" || true)" = "0" ] || exit 1
       [ "$(grep -c "dconf write /org/gnome/desktop/interface" "$f" || true)" = "4" ] || exit 1
     done
+
+    # ── Video wallpapers (see videoFrame, mpvpaperCtl and videoQml above).
+    #
+    # end4-pC only: it is the shell that runs, and ii's copies of these files
+    # have drifted from it (its switchwall.sh has no colors-only mode), so one
+    # set of anchors cannot cover both.
+    qs=$out/.config/quickshell/${qsConfig}
+
+    # Inserts a snippet after a line that must occur exactly once, re-indented
+    # to $4. Matched as a whole literal line, so QML's brackets and quotes
+    # need no escaping; cat-into rather than mv so the file keeps its mode.
+    insert_after() {
+      [ "$(grep -cxF -- "$2" "$1" || true)" = "1" ] || {
+        echo "$1: expected exactly one line: $2" >&2
+        exit 1
+      }
+      sed "s/^./$4&/" "$3" > $TMPDIR/snippet
+      awk -v anchor="$2" -v snippet=$TMPDIR/snippet \
+        '{ print } $0 == anchor { while ((getline l < snippet) > 0) print l; close(snippet) }' \
+        "$1" > $TMPDIR/inserted
+      cat $TMPDIR/inserted > "$1"
+    }
+
+    # Case. Upstream tests for a video by lowercase extension, but the
+    # selector's folder model is case-insensitive, so a .MP4 would be listed
+    # and then handed down the image path — matugen reading a video. One
+    # spelling everywhere, the regex the rest of end4-pC (DesktopMenu,
+    # BackgroundConfig, QuickConfig) already uses; switchwall.sh and the
+    # thumbnail pass below lowercase too.
+    before=$({ grep -rF 'endsWith(".mov")' $qs --include='*.qml' || true; } | wc -l)
+    [ "$before" = "3" ] || { echo "video checks: expected 3 endsWith chains, found $before" >&2; exit 1; }
+    grep -rlZF 'endsWith(".mov")' $qs --include='*.qml' | xargs -0 sed -i \
+      's#\([A-Za-z_][A-Za-z0-9_.]*\)\.endsWith("\.mp4") || \1\.endsWith("\.webm") || \1\.endsWith("\.mkv") || \1\.endsWith("\.avi") || \1\.endsWith("\.mov")#/\\.(mp4|webm|mkv|avi|mov)$/i.test(\1)#g'
+    [ "$({ grep -rF 'endsWith(".mov")' $qs --include='*.qml' || true; } | wc -l)" = "0" ] || exit 1
+    [ "$({ grep -rF '/\.(mp4|webm|mkv|avi|mov)$/i.test(' $qs --include='*.qml' || true; } | wc -l)" -ge "3" ] || exit 1
+
+    insert_after $qs/modules/common/Images.qml \
+      '    readonly property list<string> validImageExtensions: ["jpg", "jpeg", "png", "webp", "avif", "bmp", "tif", "tiff", "svg"]' \
+      ${videoQml.images} '    '
+
+    # The selector: list videos, show their tiles as thumbnails, and have a
+    # video tile ask for its thumbnail rather than sit on a file icon.
+    substituteInPlace $qs/services/Wallpapers.qml \
+      --replace-fail '    readonly property list<string> extensions: [ // TODO: add videos' \
+                     '    readonly property list<string> extensions: [' \
+      --replace-fail '"jpg", "jpeg", "png", "webp", "avif", "bmp", "svg"' \
+                     '"jpg", "jpeg", "png", "webp", "avif", "bmp", "svg", "mp4", "webm", "mkv", "avi", "mov"'
+    insert_after $qs/services/Wallpapers.qml \
+      '    property string confirmedPath: ""  // Holds confirmed path until config catches up' \
+      ${videoQml.wallpapers} '    '
+
+    substituteInPlace $qs/modules/ii/wallpaperSelector/WallpaperDirectoryItem.qml \
+      --replace-fail 'Images.isValidImageByName(fileModelData.fileName) : false' \
+                     '(Images.isValidImageByName(fileModelData.fileName) || Images.isVideoByName(fileModelData.fileName)) : false'
+    insert_after $qs/modules/ii/wallpaperSelector/WallpaperDirectoryItem.qml \
+      '                        generateThumbnail: false' \
+      ${videoQml.tile} '                        '
+
+    # The thumbnail pass. It skipped videos outright; it now thumbnails their
+    # frame, and makes sure the full-size frame exists for the preview. This is
+    # the pass that actually runs here: its Python sibling, tried first, dies
+    # on import (no GnomeDesktop typelib in the venv), so every thumbnail comes
+    # from this script. GIFs are still skipped, as upstream.
+    substituteInPlace $qs/scripts/thumbnails/generate-thumbnails-magick.sh \
+      --replace-fail '        *.gif|*.mp4|*.webm|*.mkv|*.avi|*.mov)' '        *.gif)' \
+      --replace-fail '    local encoded_path' '    local src_image="$abs_path"
+    case "''${abs_path,,}" in
+        *.mp4|*.webm|*.mkv|*.avi|*.mov) src_image="$(${videoFrame} "$abs_path")" || return 0 ;;
+    esac
+    local encoded_path' \
+      --replace-fail 'magick "$abs_path" -resize' 'magick "$src_image" -resize'
+
+    # The background: a video's picture is its own frame, not whatever
+    # thumbnailPath the config holds (that is the *applied* wallpaper's, so a
+    # previewed video showed the wrong one), and the window only goes
+    # transparent over the video that is actually playing.
+    #
+    # Of the three upstream reveals, the one at the end of a transition goes
+    # through the delay; startup and unlock stay immediate, as mpvpaper has
+    # been running all along by then.
+    B=$qs/modules/ii/background/Background.qml
+    substituteInPlace $B \
+      --replace-fail 'wallpaperIsVideo ? Config.options.background.thumbnailPath : bgRoot.effectiveWallpaperPath' \
+                     'wallpaperIsVideo ? Images.videoFramePath(bgRoot.effectiveWallpaperPath) : bgRoot.effectiveWallpaperPath' \
+      --replace-fail 'bgRoot.videoRevealed = bgRoot.wallpaperIsVideo' 'bgRoot.videoRevealed = bgRoot.videoIsLive' \
+      --replace-fail '                if (!bgRoot.wallpaperIsVideo) return' '                if (!bgRoot.videoIsLive) return' \
+      --replace-fail '                bgRoot.videoRevealed = true' '                videoRevealDelay.restart()' \
+      --replace-fail 'wallpaperIsVideo: bgRoot.wallpaperIsVideo' 'wallpaperIsVideo: bgRoot.videoIsLive' \
+      --replace-fail 'showBlur && !bgRoot.wallpaperIsVideo' 'showBlur && !bgRoot.videoIsLive'
+    [ "$(grep -c '^                bgRoot.videoRevealed = bgRoot.videoIsLive$' $B)" = "1" ] || {
+      echo "Background.qml: expected one reveal at the end of the transition" >&2
+      exit 1
+    }
+    sed -i 's/^                bgRoot.videoRevealed = bgRoot.videoIsLive$/                if (bgRoot.videoIsLive) videoRevealDelay.restart()/' $B
+    [ "$(grep -c 'bgRoot.videoRevealed = bgRoot.videoIsLive' $B)" = "2" ] || exit 1
+    insert_after $B '        property bool videoRevealed: false' ${videoQml.background} '        '
+
+    # switchwall.sh: the reordered video branch (see videoSwitch), the IPC
+    # socket in the restore script that relaunches mpvpaper at login, scheme
+    # detection reading the frame instead of the video, and is_video
+    # case-insensitive.
+    sed 's/^./            &/' ${videoSwitch.old} > $TMPDIR/switch-old
+    sed 's/^./            &/' ${videoSwitch.new} > $TMPDIR/switch-new
+    substituteInPlace $qs/scripts/colors/switchwall.sh \
+      --replace-fail "$(cat $TMPDIR/switch-old)" "$(cat $TMPDIR/switch-new)" \
+      --replace-fail 'mpvpaper -o "$VIDEO_OPTS" "\$monitor"' \
+                     'mpvpaper -o "$VIDEO_OPTS input-ipc-server=\$XDG_RUNTIME_DIR/mpvpaper-\$monitor.sock" "\$monitor"' \
+      --replace-fail 'detected_type="$(detect_scheme_type_from_image "$imgpath")"' \
+                     'detected_type="$(detect_scheme_type_from_image "$(is_video "$imgpath" && ${videoFrame} "$imgpath" || echo "$imgpath")")"' \
+      --replace-fail '    local extension="''${1##*.}"' '    local extension="''${1##*.}"; extension="''${extension,,}"'
+    [ "$(grep -c 'input-ipc-server=' $qs/scripts/colors/switchwall.sh)" = "2" ] || exit 1
 
     # ── Clipboard: picking an entry pastes it.
     #
