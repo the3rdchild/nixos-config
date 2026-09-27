@@ -828,6 +828,72 @@ ACTIVATE
     echo "$frame"
   '';
 
+  # What mpvpaper actually plays: the video itself, or a 1080p30 copy of it.
+  #
+  # Measured on this machine with a 4K60 H.264 wallpaper (40 Mbit/s), one
+  # monitor: the iGPU's video-decode engine 79% busy, and 211 of ~300 frames
+  # dropped in 5s — every monitor runs its own mpvpaper, so two of those are
+  # past what the engine can do. Capping at playback does not help: mpv's
+  # fps filter still has to decode every frame, since each is coded against
+  # the others (79% again, 86 of 150 dropped). A 1080p30 copy decodes at 13%
+  # with nothing dropped, so the copy is made once and played from then on.
+  #
+  # Only ever smaller: scaled down until it just covers a 1920x1080 screen
+  # (mpvpaper crops to fill, so a wider video keeps its full height), and
+  # dropped to 30fps only if it is faster. Anything already within both is
+  # played as it is. Made on the iGPU (35s for a 21s 4K60 clip — the 4K
+  # decode is the slow half, the low-power encoder was no faster) and
+  # indistinguishable from a proper downscale at 1080p; libx264 is the
+  # fallback for anything VA-API will not decode. The copy lives in the cache,
+  # keyed on the source's path, size and mtime, so replacing a video makes a
+  # new one and clearing the cache only costs one more conversion.
+  #
+  # A bin, not a store path, because the restore script switchwall.sh writes
+  # into hypr/custom calls it at every login and outlives any store path.
+  videoProxy = pkgs.writeShellScriptBin "ii-video-proxy" ''
+    export PATH=${lib.makeBinPath [ pkgs.ffmpeg pkgs.coreutils pkgs.gawk pkgs.libnotify ]}
+    src="''${1:-}"
+    [ -f "$src" ] || { echo "usage: ii-video-proxy <video>  (prints the file to play)" >&2; exit 2; }
+    real="$(realpath "$src")"
+
+    IFS=, read -r w h rate < <(ffprobe -v error -select_streams v:0 \
+      -show_entries stream=width,height,avg_frame_rate -of csv=p=0 "$real")
+    if [ -z "$w" ] || [ -z "$h" ]; then echo "$src"; exit 0; fi
+
+    read -r tw th shrink slow < <(awk -v w="$w" -v h="$h" -v r="$rate" 'BEGIN {
+      s = 1920 / w; if (1080 / h > s) s = 1080 / h; if (s > 1) s = 1
+      n = split(r, f, "/"); fps = (n == 2 && f[2] > 0) ? f[1] / f[2] : f[1] + 0
+      printf "%d %d %d %d\n", int(w * s / 2 + 0.5) * 2, int(h * s / 2 + 0.5) * 2, (s < 0.99), (fps > 30.5)
+    }')
+    if [ "$shrink" = 0 ] && [ "$slow" = 0 ]; then echo "$src"; exit 0; fi
+
+    dir="''${XDG_CACHE_HOME:-$HOME/.cache}/quickshell/wallpaper-proxies"
+    key="$(printf '%s %s' "$real" "$(stat -c '%s %Y' "$real")" | sha1sum | cut -c1-12)"
+    base="$(basename "$real")"
+    out="$dir/''${base%.*}.$key.mp4"
+    if [ -s "$out" ]; then echo "$out"; exit 0; fi
+
+    mkdir -p "$dir"
+    notify-send -a "Wallpaper switcher" "Optimizing video wallpaper" \
+      "$base: ''${w}x''${h} to ''${tw}x''${th}, at most 30fps. This happens once; it starts playing when done." || true
+    tmp="$out.$$.mp4"
+    hwvf="scale_vaapi=w=$tw:h=$th:format=nv12"
+    swvf="scale=$tw:$th:flags=lanczos"
+    if [ "$slow" = 1 ]; then hwvf="fps=30,$hwvf"; swvf="fps=30,$swvf"; fi
+    if ffmpeg -nostdin -v error -y -hwaccel vaapi -hwaccel_output_format vaapi -i "$real" \
+         -an -vf "$hwvf" -c:v h264_vaapi -qp 20 "$tmp" \
+      || ffmpeg -nostdin -v error -y -i "$real" \
+         -an -vf "$swvf" -c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p "$tmp"; then
+      mv -f "$tmp" "$out"
+      echo "$out"
+    else
+      rm -f "$tmp"
+      notify-send -a "Wallpaper switcher" -u critical "Could not optimize video wallpaper" \
+        "$base plays as it is." || true
+      echo "$src"
+    fi
+  '';
+
   # Pause or resume one monitor's video, over the mpv IPC socket switchwall.sh
   # now opens per output (see the dots patch). The asked-for behaviour is that
   # the video stops only while something covers it: a fullscreen window, or
@@ -1003,7 +1069,9 @@ ACTIVATE
   # thumbnailPath — so the shell saw the new wallpaper before the video was
   # running or its frame existed. Now the frame comes first, then mpvpaper,
   # then thumbnailPath and wallpaperPath, in the order the shell reads them.
-  # Each mpvpaper also opens the IPC socket mpvpaperCtl talks to.
+  # Each mpvpaper also opens the IPC socket mpvpaperCtl talks to, and plays
+  # what videoProxy hands back; the config keeps the original's path, which
+  # is what the selector, the frame and the restore script go by.
   #
   # Replaced as one block rather than line by line because the reorder moves
   # lines across each other; the old text is spelled out so any upstream change
@@ -1033,9 +1101,11 @@ ACTIVATE
 
       if [[ -z "$colors_only_flag" ]]; then
           local video_path="$imgpath"
+          local play_path
+          play_path="$(${videoProxy}/bin/ii-video-proxy "$imgpath")" || play_path="$imgpath"
           monitors=$(hyprctl monitors -j | jq -r '.[] | .name')
           for monitor in $monitors; do
-              mpvpaper -o "$VIDEO_OPTS input-ipc-server=$XDG_RUNTIME_DIR/mpvpaper-$monitor.sock" "$monitor" "$video_path" &
+              mpvpaper -o "$VIDEO_OPTS input-ipc-server=$XDG_RUNTIME_DIR/mpvpaper-$monitor.sock" "$monitor" "$play_path" &
               sleep 0.1
           done
           ${blurCache false}
@@ -1490,16 +1560,69 @@ ACTIVATE
     # socket in the restore script that relaunches mpvpaper at login, scheme
     # detection reading the frame instead of the video, and is_video
     # case-insensitive.
+    #
+    # The 1080p30 copy (see videoProxy) is made in main(), before switch()
+    # tears anything down, so the old wallpaper stays up for the length of a
+    # conversion rather than going black — the selector shows the new video's
+    # frame meanwhile. A conversion can take long enough to pick something
+    # else in the middle of it, so every switch leaves its pid in a stamp and a
+    # video switch that finds the stamp changed after converting exits instead
+    # of overriding the newer pick. The restore script asks videoProxy by name,
+    # once before its per-monitor loop, so a login after the cache was cleared
+    # converts once rather than per monitor.
+    #
+    # profile=fast: mpv's render pass went from 30% to 12% of the iGPU per
+    # monitor with it, same video, nothing dropped either way. A 1080p video
+    # on a 1080p screen is not scaled, so what it gives up is the dither.
     sed 's/^./            &/' ${videoSwitch.old} > $TMPDIR/switch-old
     sed 's/^./            &/' ${videoSwitch.new} > $TMPDIR/switch-new
     substituteInPlace $qs/scripts/colors/switchwall.sh \
       --replace-fail "$(cat $TMPDIR/switch-old)" "$(cat $TMPDIR/switch-new)" \
-      --replace-fail 'mpvpaper -o "$VIDEO_OPTS" "\$monitor"' \
-                     'mpvpaper -o "$VIDEO_OPTS input-ipc-server=\$XDG_RUNTIME_DIR/mpvpaper-\$monitor.sock" "\$monitor"' \
+      --replace-fail 'video-align-y=0.5 load-scripts=no"' 'video-align-y=0.5 load-scripts=no profile=fast"' \
+      --replace-fail 'mpvpaper -o "$VIDEO_OPTS" "\$monitor" "$video_path"' \
+                     'mpvpaper -o "$VIDEO_OPTS input-ipc-server=\$XDG_RUNTIME_DIR/mpvpaper-\$monitor.sock" "\$monitor" "\$video"' \
+      --replace-fail '    switch "$imgpath" "$mode_flag"' '    if [[ -z "$colors_only_flag" ]]; then
+        echo $$ > "$XDG_RUNTIME_DIR/ii-switchwall.latest"
+        if is_video "$imgpath"; then
+            ${videoProxy}/bin/ii-video-proxy "$imgpath" >/dev/null
+            [ "$(cat "$XDG_RUNTIME_DIR/ii-switchwall.latest" 2>/dev/null)" = "$$" ] || exit 0
+        fi
+    fi
+    switch "$imgpath" "$mode_flag"' \
       --replace-fail 'detected_type="$(detect_scheme_type_from_image "$imgpath")"' \
                      'detected_type="$(detect_scheme_type_from_image "$(is_video "$imgpath" && ${videoFrame} "$imgpath" || echo "$imgpath")")"' \
       --replace-fail '    local extension="''${1##*.}"' '    local extension="''${1##*.}"; extension="''${extension,,}"'
     [ "$(grep -c 'input-ipc-server=' $qs/scripts/colors/switchwall.sh)" = "2" ] || exit 1
+    # Inside create_restore_script's unquoted heredoc: \$( runs at login,
+    # $video_path is the original, filled in when the script is written.
+    printf '%s\n' 'video="\$(ii-video-proxy "$video_path" 2>/dev/null || echo "$video_path")"' > $TMPDIR/restore-video
+    insert_after $qs/scripts/colors/switchwall.sh 'pkill -f -9 mpvpaper' $TMPDIR/restore-video ""
+    [ "$(grep -c 'ii-video-proxy' $qs/scripts/colors/switchwall.sh)" = "3" ] || exit 1
+
+    # ── The restore script never ran on this machine.
+    #
+    # switchwall.sh writes it with a #!/bin/bash shebang, and NixOS has no
+    # /bin/bash: execs.lua's exec failed with "bad interpreter" at every login,
+    # silently, so a video wallpaper came back as an empty screen — the shell
+    # goes transparent because the config says video, and nothing was playing
+    # behind it. Both heredocs get /usr/bin/env, and execs.lua runs the script
+    # through bash as well, because the script is in mutablePaths and one
+    # written before this fix keeps its old shebang until the next video
+    # wallpaper is applied.
+    #
+    # And the kill before each start was `pkill -f mpvpaper`, which matches the
+    # word anywhere in any command line: the thumbnail pass's ffmpeg writing to
+    # .../mpvpaper_thumbnails/, ii-mpvpaper-ctl, an editor with the file open.
+    # Anchored on argv[0] it only matches mpvpaper itself. (Not -x: the
+    # process is the wrapper's .mpvpaper-wrapp, which argv[0] still names.)
+    substituteInPlace $qs/scripts/colors/switchwall.sh \
+      --replace-fail '#!/bin/bash' '#!/usr/bin/env bash' \
+      --replace-fail 'pkill -f -9 mpvpaper' "pkill -9 -f '^[^ ]*mpvpaper '"
+    [ "$(grep -c '#!/bin/bash' $qs/scripts/colors/switchwall.sh || true)" = "0" ] || exit 1
+    [ "$(grep -c "pkill -9 -f '^\[^ \]\*mpvpaper '" $qs/scripts/colors/switchwall.sh)" = "2" ] || exit 1
+    substituteInPlace $out/.config/hypr/hyprland/execs.lua \
+      --replace-fail 'hl.exec_cmd("$HOME/.config/hypr/custom/scripts/__restore_video_wallpaper.sh")' \
+                     'hl.exec_cmd("bash $HOME/.config/hypr/custom/scripts/__restore_video_wallpaper.sh")'
 
     # ── Blur over a live wallpaper (see blurCache).
     #
@@ -2044,6 +2167,8 @@ in {
     # missing these is not one dead feature but a dead line in the autostart.
     mpvpaper
     ffmpeg
+    videoProxy # `ii-video-proxy <video>`: the restore script calls it by name
+               # at every login; also usable by hand, prints the file to play
 
     # "Open Upscayl" on the wallpaper notification (switchwall.sh:82). With it
     # absent the action falls through to a prompt offering `yay -S`, which on
