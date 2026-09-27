@@ -830,7 +830,8 @@ ACTIVATE
 
   # Pause or resume one monitor's video, over the mpv IPC socket switchwall.sh
   # now opens per output (see the dots patch). The asked-for behaviour is that
-  # the video stops only while a fullscreen window covers it. mpvpaper's own
+  # the video stops only while something covers it: a fullscreen window, or
+  # the overview (see videoQml.background for why that one matters). mpvpaper's own
   # --auto-pause cannot do that here: it pauses when the compositor stops
   # sending frame callbacks, and Hyprland does not stop — tested on this
   # machine, an mpvpaper covered edge to edge by the shell's opaque wallpaper
@@ -956,6 +957,15 @@ ACTIVATE
     # The pause keys on the *applied* wallpaper rather than videoIsLive, so
     # locking the screen over a fullscreen window does not resume a video
     # nobody can see.
+    #
+    # It also covers the niri-style overview, whose own blur (overviewBlurActive,
+    # upstream's condition, reused as is) paints this window full screen with
+    # a blurred copy of the still frame — the video is already hidden then.
+    # Pausing it is what keeps the overview smooth: rules.lua blurs every
+    # quickshell:* layer, and Hyprland caches the blur of what lies beneath
+    # only until that changes. A video beneath changes it every frame, so the
+    # full-screen blur was being redone at the video's frame rate while the
+    # overview scrolled at the monitor's.
     background = pkgs.writeText "ii-video-background.qml" ''
       readonly property bool videoIsLive: bgRoot.wallpaperIsVideo
           && bgRoot.effectiveWallpaperPath === Config.options.background.wallpaperPath
@@ -980,10 +990,10 @@ ACTIVATE
           wallpaper.source = bgRoot.wallpaperPath
       }
 
-      readonly property bool videoPausedForFullscreen: /\.(mp4|webm|mkv|avi|mov)$/i.test(Config.options.background.wallpaperPath)
-          && bgRoot.activeWorkspaceWithFullscreen != undefined
-      onVideoPausedForFullscreenChanged: Quickshell.execDetached([
-          "${mpvpaperCtl}", bgRoot.modelData.name, bgRoot.videoPausedForFullscreen ? "pause" : "play"
+      readonly property bool videoPaused: /\.(mp4|webm|mkv|avi|mov)$/i.test(Config.options.background.wallpaperPath)
+          && (bgRoot.activeWorkspaceWithFullscreen != undefined || bgRoot.overviewBlurActive)
+      onVideoPausedChanged: Quickshell.execDetached([
+          "${mpvpaperCtl}", bgRoot.modelData.name, bgRoot.videoPaused ? "pause" : "play"
       ])
     '';
   };
@@ -1424,6 +1434,23 @@ ACTIVATE
     sed -i 's/^                bgRoot.videoRevealed = bgRoot.videoIsLive$/                if (bgRoot.videoIsLive) videoRevealDelay.restart()/' $B
     [ "$(grep -c 'bgRoot.videoRevealed = bgRoot.videoIsLive' $B)" = "2" ] || exit 1
     insert_after $B '        property bool videoRevealed: false' ${videoQml.background} '        '
+
+    # The overview's workspace cards draw the wallpaper as-is, so with a video
+    # they loaded the .mp4 as an image, failed, and showed the card's colour —
+    # which upstream left as a debugging "red". The card gets the video's
+    # frame, and a theme colour behind it for the moment it is loading.
+    #
+    # sourceSize because there are twenty cards (maxWorkspaces), each the
+    # wallpaper at overview.scale (0.18 here, ~346x194), and without it they
+    # were fed the full image — 1080p at best, the 16MB Escoffier PNG at
+    # worst. They share one url, so at the cards' size it is one small decode.
+    O=$qs/modules/ii/overview/NiriOverview.qml
+    substituteInPlace $O \
+      --replace-fail '                        color: "red"' '                        color: Appearance.colors.colLayer1' \
+      --replace-fail '                            source: Config.options.background.wallpaperPath' \
+                     '                            source: Images.isVideoByName(Config.options.background.wallpaperPath) ? Images.videoFramePath(Config.options.background.wallpaperPath) : Config.options.background.wallpaperPath
+                            sourceSize: Qt.size(root.monitorW * root.scale, root.wsHeight)'
+    [ "$(grep -c 'Images.videoFramePath' $O)" = "1" ] || exit 1
 
     # switchwall.sh: the reordered video branch (see videoSwitch), the IPC
     # socket in the restore script that relaunches mpvpaper at login, scheme
