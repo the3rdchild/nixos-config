@@ -1038,12 +1038,46 @@ ACTIVATE
               mpvpaper -o "$VIDEO_OPTS input-ipc-server=$XDG_RUNTIME_DIR/mpvpaper-$monitor.sock" "$monitor" "$video_path" &
               sleep 0.1
           done
+          ${blurCache false}
 
           set_thumbnail_path "$thumbnail"
           set_wallpaper_path "$imgpath"
       fi
     '';
   };
+
+  # ── Blur over a live wallpaper.
+  #
+  # Measured on this machine with a 30fps 1080p video: mpv dropped ~16 of
+  # every 30 frames, the same in every sync mode, and with framedrop=no the
+  # video ran at half speed instead. Not one frame could be drawn when mpv
+  # had it ready; every one waited on Hyprland's frame callback, which came
+  # ~14 times a second on a 120Hz output. The compositor itself was the
+  # bottleneck, which is also why the whole desktop felt slow and why the same
+  # video in a browser did not: a browser window does not sit *under* the blur.
+  # With blur off, 0 drops. The two things responsible, found by turning them
+  # off one at a time (drops per 5s: 78 as shipped):
+  #
+  # rules.lua blurs every quickshell:* layer, including three where the blur
+  # can never be seen: the shell's own wallpaper window (full screen, opaque
+  # over a still wallpaper and transparent but for the widgets over a video),
+  # the 2px screen-frame strips and the screen corners. Excluding the
+  # wallpaper window alone took it to 18, all three to 10. Nothing visible is
+  # lost with a still wallpaper either, so they are excluded outright.
+  #
+  # new_optimizations caches the blurred background (background + bottom
+  # layers) so that blurred surfaces above it sample the cache instead of
+  # blurring again. The right trade for a still wallpaper, the wrong one for a
+  # video: the cache goes stale every video frame, so every frame paid for a
+  # full-screen blur per monitor however little of it anything blurred was
+  # over. Off on top of the rules above: 0 drops on both monitors, with foot
+  # and Dolphin tiled over the video and translucent (inactive_opacity 0.9).
+  # It is off only while a video is set — switchwall.sh flips it when the
+  # wallpaper changes, and general.lua re-derives it on every config load from
+  # the restore script, the one file that records whether a video is set.
+  # With it off, xray has no effect: a translucent floating window blurs the
+  # windows behind it as well as the wallpaper.
+  blurCache = on: "hyprctl eval 'hl.config({ decoration = { blur = { new_optimizations = ${lib.boolToString on} } } })' >/dev/null";
 
   # ── The merged, patched config tree.
   #
@@ -1466,6 +1500,37 @@ ACTIVATE
                      'detected_type="$(detect_scheme_type_from_image "$(is_video "$imgpath" && ${videoFrame} "$imgpath" || echo "$imgpath")")"' \
       --replace-fail '    local extension="''${1##*.}"' '    local extension="''${1##*.}"; extension="''${extension,,}"'
     [ "$(grep -c 'input-ipc-server=' $qs/scripts/colors/switchwall.sh)" = "2" ] || exit 1
+
+    # ── Blur over a live wallpaper (see blurCache).
+    #
+    # The video branch turns the blur cache off (in videoSwitch); the image
+    # branch, which is where upstream clears the restore script, turns it
+    # back on. That remove_restore is the only one at this depth — the other
+    # sits one level deeper, in the video branch's failure path.
+    insert_after $qs/scripts/colors/switchwall.sh '                remove_restore' \
+      ${pkgs.writeText "ii-video-switch-image" "${blurCache true}\n"} '                '
+    [ "$(grep -c 'new_optimizations = ' $qs/scripts/colors/switchwall.sh)" = "2" ] || exit 1
+
+    cat >> $out/.config/hypr/hyprland/rules.lua <<'IIRULES'
+
+-- No blur where it can never be seen; it made a video wallpaper stutter (NixOS config, ii-session.nix)
+hl.layer_rule({ match = { namespace = "quickshell:background" }, blur = false })
+hl.layer_rule({ match = { namespace = "quickshell:screenframe" }, blur = false })
+hl.layer_rule({ match = { namespace = "quickshell:screenCorners" }, blur = false })
+IIRULES
+
+    cat >> $out/.config/hypr/hyprland/general.lua <<'IIGENERAL'
+
+-- No blur cache while a video wallpaper is set: it goes stale every video frame (NixOS config, ii-session.nix)
+local restore = io.open(HOME .. "/.config/hypr/custom/scripts/__restore_video_wallpaper.sh", "r")
+if restore then
+    local script = restore:read("*a") or ""
+    restore:close()
+    if script:find("mpvpaper -o", 1, true) then
+        hl.config({ decoration = { blur = { new_optimizations = false } } })
+    end
+end
+IIGENERAL
 
     # ── Clipboard: picking an entry pastes it.
     #
