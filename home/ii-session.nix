@@ -850,10 +850,20 @@ ACTIVATE
   #
   # A bin, not a store path, because the restore script switchwall.sh writes
   # into hypr/custom calls it at every login and outlives any store path.
+  #
+  # --cached never converts: it prints what to play only if that needs no
+  # conversion or the copy is already made, and fails otherwise. The lock
+  # screen asks that way (see mpvpaperCtl), so locking never waits on a
+  # conversion. The lock video's copy is started as soon as it is picked
+  # (see the switchwall.sh patch), which is the second way two conversions of
+  # one video can overlap — the flock makes the later one wait for the first
+  # and then use its copy.
   videoProxy = pkgs.writeShellScriptBin "ii-video-proxy" ''
-    export PATH=${lib.makeBinPath [ pkgs.ffmpeg pkgs.coreutils pkgs.gawk pkgs.libnotify ]}
+    export PATH=${lib.makeBinPath [ pkgs.ffmpeg pkgs.coreutils pkgs.gawk pkgs.libnotify pkgs.util-linux ]}
+    cached=
+    if [ "''${1:-}" = --cached ]; then cached=1; shift; fi
     src="''${1:-}"
-    [ -f "$src" ] || { echo "usage: ii-video-proxy <video>  (prints the file to play)" >&2; exit 2; }
+    [ -f "$src" ] || { echo "usage: ii-video-proxy [--cached] <video>  (prints the file to play)" >&2; exit 2; }
     real="$(realpath "$src")"
 
     IFS=, read -r w h rate < <(ffprobe -v error -select_streams v:0 \
@@ -872,8 +882,12 @@ ACTIVATE
     base="$(basename "$real")"
     out="$dir/''${base%.*}.$key.mp4"
     if [ -s "$out" ]; then echo "$out"; exit 0; fi
+    [ -z "$cached" ] || exit 1
 
     mkdir -p "$dir"
+    exec 9>"$out.lock"
+    flock 9
+    if [ -s "$out" ]; then echo "$out"; exit 0; fi
     notify-send -a "Wallpaper switcher" "Optimizing video wallpaper" \
       "$base: ''${w}x''${h} to ''${tw}x''${th}, at most 30fps. This happens once; it starts playing when done." || true
     tmp="$out.$$.mp4"
@@ -909,21 +923,92 @@ ACTIVATE
   # goes live, and that is also the moment mpvpaper was spawned; the socket
   # took ~300ms to appear in testing. A stale one (mpvpaper is killed with -9,
   # which leaves the file behind) just refuses the connection.
+  #
+  # Given a video as well, it also makes that the one playing, which is how
+  # the lock screen plays its own wallpaper live (see videoQml.background):
+  # the same mpvpaper loads the lock video on lock and the desktop's again on
+  # unlock, so there is never a second decoder, and the hidden desktop video
+  # is not decoding meanwhile. loadfile starts the desktop video from the
+  # beginning, as asked. With `lock`, a desktop that has no mpvpaper (a still
+  # wallpaper) gets one started for the lock video, which `stop` kills on
+  # unlock; and a lock video whose 1080p30 copy is not made yet is not played
+  # at all (exit 3, so the lock screen keeps its frame) — the copy is started
+  # instead, for the next lock. The desktop's own video is never held back
+  # that way: it plays the original if it has to, as switchwall.sh does.
+  #
+  # Exits once mpv reports the file loaded, so the shell's reveal starts from
+  # a video that is actually there. The shell serialises its calls per
+  # monitor, so two never race on one mpvpaper.
   mpvpaperCtl = pkgs.writeShellScript "ii-mpvpaper-ctl" ''
-    export PATH=${lib.makeBinPath [ pkgs.socat pkgs.coreutils ]}
-    sock="''${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/mpvpaper-$1.sock"
+    export PATH=${lib.makeBinPath [ pkgs.socat pkgs.coreutils pkgs.jq pkgs.procps pkgs.util-linux pkgs.mpvpaper videoProxy ]}
+    usage() { echo "usage: ii-mpvpaper-ctl <monitor> pause|play [<video> [lock]] | stop" >&2; exit 2; }
+    mon="''${1:-}"
+    [ -n "$mon" ] || usage
+    sock="''${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/mpvpaper-$mon.sock"
+
+    ipc() { socat -t 1 - "UNIX-CONNECT:$sock" 2>/dev/null <<< "$1" | jq -c 'select(has("error"))' 2>/dev/null | head -n 1; }
+    get() { ipc "$(jq -nc --arg p "$1" '{command: ["get_property", $p]}')" | jq -r 'select(.error == "success" and .data != null) | .data | tostring'; }
+    alive() { [ -n "$(get pid)" ]; }
+    wait_alive() {
+      for _ in $(seq 30); do
+        alive && return 0
+        sleep 0.1
+      done
+      return 1
+    }
+
+    stop() {
+      pkill -9 -f "^[^ ]*mpvpaper .*/mpvpaper-$mon\.sock" || true
+      rm -f "$sock"
+    }
+
     case "''${2:-}" in
+      stop) stop; exit 0 ;;
       pause) value=true ;;
       play)  value=false ;;
-      *) echo "usage: ii-mpvpaper-ctl <monitor> pause|play" >&2; exit 2 ;;
+      *) usage ;;
     esac
+    video="''${3:-}"
+    lock="''${4:-}"
+
+    if [ -z "$video" ]; then
+      wait_alive || exit 1
+      ipc "{\"command\":[\"set_property\",\"pause\",$value]}" >/dev/null
+      exit 0
+    fi
+
+    if ! target="$(ii-video-proxy --cached "$video")"; then
+      if [ -n "$lock" ]; then
+        setsid -f ii-video-proxy "$video" >/dev/null 2>&1 < /dev/null
+        exit 3
+      fi
+      target="$video"
+    fi
+
+    if ! alive; then
+      if [ -n "$lock" ]; then
+        rm -f "$sock"
+        setsid -f mpvpaper -o "${videoOpts} input-ipc-server=$sock" "$mon" "$target" >/dev/null 2>&1 < /dev/null
+        wait_alive || { stop; exit 1; }
+      fi
+      wait_alive || exit 1
+    fi
+    if [ "$(get path)" != "$target" ]; then
+      ipc "$(jq -nc --arg p "$target" '{command: ["loadfile", $p, "replace"]}')" >/dev/null
+    fi
+    ipc "{\"command\":[\"set_property\",\"pause\",$value]}" >/dev/null
+
     for _ in $(seq 30); do
-      [ -S "$sock" ] && break
+      if [ "$(get path)" = "$target" ] && [ -n "$(get playback-time)" ]; then exit 0; fi
       sleep 0.1
     done
-    printf '{"command":["set_property","pause",%s]}\n' "$value" \
-      | socat - "UNIX-CONNECT:$sock" >/dev/null 2>&1 || true
+    exit 1
   '';
+
+  # mpvpaper's options, exactly as switchwall.sh sets them once the dots patch
+  # has added profile=fast (checked there), for the mpvpaper the lock screen
+  # starts itself.
+  videoOpts = "no-audio loop hwdec=auto scale=bilinear interpolation=no video-sync=display-resample panscan=1.0 video-scale-x=1.0 video-scale-y=1.0 video-align-x=0.5 video-align-y=0.5 load-scripts=no profile=fast";
 
   # The QML the dots patch inserts for video wallpapers. Nix strips the common
   # indentation, so each is re-indented to its insertion point at build time,
@@ -1020,11 +1105,21 @@ ACTIVATE
     # until switchwall.sh extracts it, and it writes thumbnailPath straight
     # after, so a failed load is retried then.
     #
-    # The pause keys on the *applied* wallpaper rather than videoIsLive, so
-    # locking the screen over a fullscreen window does not resume a video
-    # nobody can see.
+    # "Live" means the path ii-mpvpaper-ctl reports playing (playingPath), not
+    # just the applied wallpaper, because the lock screen switches mpvpaper to
+    # its own video (see mpvpaperCtl): locked, the lock video is revealed once
+    # it has loaded, through the same 500ms delay; unlocked, the desktop's
+    # again once it has loaded back. Until then — or for good, if the lock
+    # video's 1080p30 copy is not made yet — the frame is shown, as for a
+    # preview. With the lock blur on, the lock screen shows the blurred frame
+    # as before and nothing is switched.
     #
-    # It also covers the niri-style overview, whose own blur (overviewBlurActive,
+    # Unlocked, the video pauses while a fullscreen window covers it. Locked,
+    # it plays only if it is what the lock screen shows (so a still lock
+    # wallpaper, or the blur, pauses the desktop video behind it), and pauses
+    # while its screen is off.
+    #
+    # The pause also covers the niri-style overview, whose own blur (overviewBlurActive,
     # upstream's condition, reused as is) paints this window full screen with
     # a blurred copy of the still frame — the video is already hidden then.
     # Pausing it is what keeps the overview smooth: rules.lua blurs every
@@ -1034,7 +1129,7 @@ ACTIVATE
     # overview scrolled at the monitor's.
     background = pkgs.writeText "ii-video-background.qml" ''
       readonly property bool videoIsLive: bgRoot.wallpaperIsVideo
-          && bgRoot.effectiveWallpaperPath === Config.options.background.wallpaperPath
+          && bgRoot.effectiveWallpaperPath === bgRoot.playingPath
       onVideoIsLiveChanged: {
           if (!bgRoot.videoIsLive) {
               videoRevealDelay.stop()
@@ -1056,11 +1151,79 @@ ACTIVATE
           wallpaper.source = bgRoot.wallpaperPath
       }
 
-      readonly property bool videoPaused: /\.(mp4|webm|mkv|avi|mov)$/i.test(Config.options.background.wallpaperPath)
-          && (bgRoot.activeWorkspaceWithFullscreen != undefined || bgRoot.overviewBlurActive)
-      onVideoPausedChanged: Quickshell.execDetached([
-          "${mpvpaperCtl}", bgRoot.modelData.name, bgRoot.videoPaused ? "pause" : "play"
-      ])
+      // What this monitor's mpvpaper plays and whether it is paused, kept in
+      // step by ii-mpvpaper-ctl one call at a time.
+      readonly property string desktopVideo: Images.isVideoByName(Config.options.background.wallpaperPath)
+          ? Config.options.background.wallpaperPath : ""
+      property bool lockVideoFailed: false
+      readonly property string lockVideo: {
+          const lockWall = Config.options.background.lockWall
+          if (!GlobalStates.screenLocked || bgRoot.lockVideoFailed || Config.options.lock.blur.enable) return ""
+          if (lockWall === "" || lockWall === Config.options.background.wallpaperPath || !Images.isVideoByName(lockWall)) return ""
+          return lockWall
+      }
+      readonly property string mpvVideo: bgRoot.lockVideo || bgRoot.desktopVideo
+      readonly property bool monitorDpmsOff: GlobalStates.screenLocked
+          && HyprlandData.monitors.find(m => m.name === bgRoot.modelData.name)?.dpmsStatus === false
+      readonly property bool videoPaused: GlobalStates.screenLocked
+          ? (bgRoot.monitorDpmsOff || Config.options.lock.blur.enable || bgRoot.effectiveWallpaperPath !== bgRoot.mpvVideo)
+          : (bgRoot.activeWorkspaceWithFullscreen != undefined || bgRoot.overviewBlurActive)
+      readonly property string mpvState: bgRoot.mpvVideo === "" ? "" : bgRoot.mpvVideo + (bgRoot.videoPaused ? "|pause" : "|play")
+      onMpvStateChanged: Qt.callLater(bgRoot.syncMpv)
+
+      // "none": the applied wallpaper, as switchwall.sh left it. Otherwise
+      // what ii-mpvpaper-ctl last confirmed, "" while it is switching.
+      property string mpvOverride: "none"
+      readonly property string playingPath: bgRoot.mpvOverride === "none" ? bgRoot.desktopVideo : bgRoot.mpvOverride
+
+      function syncMpv() {
+          if (mpvProc.running) {
+              mpvProc.again = true
+              return
+          }
+          const video = bgRoot.mpvVideo
+          mpvProc.video = video
+          mpvProc.forLock = video !== "" && video === bgRoot.lockVideo
+          if (video !== bgRoot.playingPath) bgRoot.mpvOverride = ""
+          mpvProc.command = video === ""
+              ? ["${mpvpaperCtl}", bgRoot.modelData.name, "stop"]
+              : ["${mpvpaperCtl}", bgRoot.modelData.name, bgRoot.videoPaused ? "pause" : "play", video]
+                  .concat(mpvProc.forLock ? ["lock"] : [])
+          mpvProc.running = true
+      }
+      Process {
+          id: mpvProc
+          property string video: ""
+          property bool forLock: false
+          property bool again: false
+          onExited: exitCode => {
+              if (!mpvProc.forLock)
+                  bgRoot.mpvOverride = "none"
+              else if (exitCode === 0)
+                  bgRoot.mpvOverride = mpvProc.video
+              else
+                  bgRoot.lockVideoFailed = true
+              if (mpvProc.again) {
+                  mpvProc.again = false
+                  Qt.callLater(bgRoot.syncMpv)
+              }
+          }
+      }
+      Connections {
+          target: GlobalStates
+          function onScreenLockedChanged() {
+              if (!GlobalStates.screenLocked) bgRoot.lockVideoFailed = false
+          }
+      }
+
+      // Nothing the shell listens to tells it a screen went off, so while
+      // locked with a video the monitor list is refreshed every 2s instead.
+      Timer {
+          running: GlobalStates.screenLocked && bgRoot.mpvVideo !== ""
+          interval: 2000
+          repeat: true
+          onTriggered: HyprlandData.updateMonitors()
+      }
     '';
   };
 
@@ -1852,6 +2015,15 @@ ACTIVATE
                             sourceSize: Qt.size(root.monitorW * root.scale, root.wsHeight)'
     [ "$(grep -c 'Images.videoFramePath' $O)" = "1" ] || exit 1
 
+    # Settings' Desktop/Lockscreen pair and the desktop menu's wallpaper
+    # strip picture a video by thumbnailPath, which is the *desktop* video's
+    # frame — so a lock screen video, or any other video in the strip, showed
+    # the desktop's. Each gets its own frame.
+    for f in $qs/modules/ii/settings/pages/BackgroundConfig.qml $qs/modules/ii/desktopMenu/DesktopMenu.qml; do
+      substituteInPlace "$f" \
+        --replace-fail '            ? Config.options.background.thumbnailPath' '            ? Images.videoFramePath(path)'
+    done
+
     # ── Bar islands that follow the wallpaper (see barIslandQml).
     cp ${barIslandQml.service} $qs/services/WallpaperRegions.qml
     G=$qs/modules/ii/bar/BarGroup.qml
@@ -1895,7 +2067,9 @@ import qs.services' \
     # video switch that finds the stamp changed after converting exits instead
     # of overriding the newer pick. The restore script asks videoProxy by name,
     # once before its per-monitor loop, so a login after the cache was cleared
-    # converts once rather than per monitor.
+    # converts once rather than per monitor. A lock screen video is picked
+    # through the colors-only lock mode, which only reads its frame; its copy
+    # is started there in the background, so the first lock can play it.
     #
     # profile=fast: mpv's render pass went from 30% to 12% of the iGPU per
     # monitor with it, same video, nothing dropped either way. A 1080p video
@@ -1913,6 +2087,8 @@ import qs.services' \
             ${videoProxy}/bin/ii-video-proxy "$imgpath" >/dev/null
             [ "$(cat "$XDG_RUNTIME_DIR/ii-switchwall.latest" 2>/dev/null)" = "$$" ] || exit 0
         fi
+    elif [[ -n "$colors_lock_flag" ]] && is_video "$imgpath"; then
+        ${pkgs.util-linux}/bin/setsid -f ${videoProxy}/bin/ii-video-proxy "$imgpath" >/dev/null 2>&1 < /dev/null
     fi
     switch "$imgpath" "$mode_flag"' \
       --replace-fail 'detected_type="$(detect_scheme_type_from_image "$imgpath")"' \
@@ -1923,7 +2099,12 @@ import qs.services' \
     # $video_path is the original, filled in when the script is written.
     printf '%s\n' 'video="\$(ii-video-proxy "$video_path" 2>/dev/null || echo "$video_path")"' > $TMPDIR/restore-video
     insert_after $qs/scripts/colors/switchwall.sh 'pkill -f -9 mpvpaper' $TMPDIR/restore-video ""
-    [ "$(grep -c 'ii-video-proxy' $qs/scripts/colors/switchwall.sh)" = "3" ] || exit 1
+    [ "$(grep -c 'ii-video-proxy' $qs/scripts/colors/switchwall.sh)" = "4" ] || exit 1
+    # The lock screen's own mpvpaper uses the same options (see videoOpts).
+    grep -qxF 'VIDEO_OPTS="${videoOpts}"' $qs/scripts/colors/switchwall.sh || {
+      echo "switchwall.sh: VIDEO_OPTS no longer matches videoOpts" >&2
+      exit 1
+    }
 
     # ── The restore script never ran on this machine.
     #
