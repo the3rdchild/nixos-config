@@ -103,11 +103,11 @@
     scope = name: "systemd/user/${name}.scope.d/50-memory.conf";
     service = name: "systemd/user/${name}.service.d/50-memory.conf";
 
-    browser = limit "Scope" "1G" "2G";
+    browser = limit "Scope" "2G" "3G";
     browserSvc = limit "Service" "1G" "2G";
     editor = limit "Scope" "2G" "3.5G";
-    editorSvc = limit "Service" "2G" "3.5G";
-  in {
+    editorSvc = limit "Service" "2G" "3G";
+  in {  
     # flatpak runs every app in its own scope, whoever launched it.
     ${scope "app-flatpak-app.zen_browser.zen-"} = limit "Scope" "1.5G" "2.5G";
 

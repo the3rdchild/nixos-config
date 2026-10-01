@@ -1253,7 +1253,9 @@ ACTIVATE
   #
   # The 65% needs the bar's blur rule to accept it: rules.lua gives every
   # quickshell layer ignore_alpha 0.79, which would leave these islands
-  # unblurred; the bar layers get 0.3 below (see IIRULES).
+  # unblurred; the bar layers get 0.3 below (see IIRULES). They also get
+  # xray off: xray blurs the blur cache, which is off under a video, so the
+  # islands were blurring black, not the wallpaper.
   barRegionsGrid = pkgs.writeShellScript "ii-bar-regions-grid" ''
     set -eu
     ${pkgs.imagemagick}/bin/magick identify -ping -format '%w %h\n' "$1[0]"
@@ -2148,9 +2150,13 @@ hl.layer_rule({ match = { namespace = "quickshell:background" }, blur = false })
 hl.layer_rule({ match = { namespace = "quickshell:screenframe" }, blur = false })
 hl.layer_rule({ match = { namespace = "quickshell:screenCorners" }, blur = false })
 
--- Bar islands are 65% opaque over the wallpaper; blur them anyway (NixOS config, ii-session.nix)
+-- Bar islands are 65% opaque over the wallpaper; blur them anyway, and blur what is really
+-- behind them: xray reads the blur cache, which is off under a video wallpaper, and then blurs
+-- black, so bright wallpaper gave near-black islands (NixOS config, ii-session.nix)
 hl.layer_rule({ match = { namespace = "quickshell:bar" }, ignore_alpha = 0.3 })
 hl.layer_rule({ match = { namespace = "quickshell:verticalBar" }, ignore_alpha = 0.3 })
+hl.layer_rule({ match = { namespace = "quickshell:bar" }, xray = false })
+hl.layer_rule({ match = { namespace = "quickshell:verticalBar" }, xray = false })
 IIRULES
 
     cat >> $out/.config/hypr/hyprland/general.lua <<'IIGENERAL'
