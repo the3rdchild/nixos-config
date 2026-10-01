@@ -813,16 +813,35 @@ in
     # negotiated, and you get a voice channel you can join with no audio in
     # either direction.
     #
-    # The fix is to make the box honest: with no default route, a global v6
+    # The fix is to make the box honest: with no usable v6 route, a global v6
     # destination is ENETUNREACH immediately, ICE skips v6 entirely, and the
     # connection is made over v4 on the first try. Nothing is lost, because
     # there was no working v6 to lose.
     #
-    # Deliberately conditional, not a blanket "turn IPv6 off". The route is
-    # removed only while the link has no globally routable address of its own,
-    # so roaming onto a network with working IPv6 keeps it. ULAs (fc00::/7) do
-    # not count as routable — a LAN handing out its own ULA prefix reproduces
-    # exactly the same black hole.
+    # Shadow the RA route, don't delete it. Deleting was the first version and
+    # it did not stick: the router re-advertises every few minutes, NM's
+    # userspace RA handling quietly reinstalls the default, and none of that
+    # fires a dispatcher event — so the route came back with no hook to catch
+    # it. Observed: "removed unusable IPv6 default route" in the journal, the
+    # same route back in `ip -6 route` not long after, and Discord voice dead
+    # again for as long as Tailscale was up. Instead this installs
+    #
+    #   unreachable default dev lo proto static metric 1
+    #
+    # which wins over NM's metric 600 (wifi) / 100 (ethernet) however often
+    # the RA route is refreshed, because NM never touches a route it did not
+    # add. It also does not get in the way of the tunnels: WARP and wg0 route
+    # through policy rules of their own, and tailnet traffic is matched by
+    # Tailscale's rule 5270 (table 52) before the main table is ever consulted.
+    #
+    # Deliberately conditional, not a blanket "turn IPv6 off". The blocker is
+    # present only while no non-tunnel link has a globally routable address,
+    # and it is removed the moment one does — roaming onto a network with
+    # working IPv6, or plugging in an ethernet that has it, keeps v6. The check
+    # is box-wide rather than per-link because the blocker is: one broken wifi
+    # must not shadow a working ethernet. ULAs (fc00::/7) do not count as
+    # routable — a LAN handing out its own ULA prefix reproduces exactly the
+    # same black hole.
     #
     # Why a dispatcher and not `ipv6.never-default`: see the dns="none" note
     # further up. NM's [connection] section silently ignores properties that
@@ -830,13 +849,14 @@ in
     # them — it would read as applied and do nothing, which is the same trap
     # ipv4.ignore-auto-dns fell into.
     #
-    # Tunnels are skipped outright. wg0 and WARP have their own carefully
-    # ordered handling above and a full-tunnel VPN is entitled to own the v6
-    # default route; tailscale0 is the interface holding the ULA in the first
-    # place and must keep its routes.
+    # Tunnel events are skipped outright, and tunnel addresses do not count as
+    # "real v6". wg0 and WARP have their own carefully ordered handling above
+    # and a full-tunnel VPN is entitled to own the v6 default route; tailscale0
+    # is the interface holding the ULA in the first place and must keep its
+    # routes.
     {
       type = "basic";
-      source = pkgs.writeShellScript "ipv6-drop-unusable-default" ''
+      source = pkgs.writeShellScript "ipv6-block-unusable-default" ''
         iface="$1"
         action="$2"
 
@@ -849,46 +869,51 @@ in
           lo|wg0|tailscale0|CloudflareWARP) exit 0 ;;
         esac
 
-        # "up" covers boot and every reconnect; the other two catch a lease or
-        # a reapply changing the picture after the fact.
+        # "up" covers boot and every reconnect; dhcp6-change and reapply catch
+        # a lease or a reapply changing the picture after the fact; "down"
+        # re-judges what is left, e.g. unplugging a v6 ethernet while a broken
+        # wifi stays up.
         case "$action" in
-          up|dhcp6-change|reapply) ;;
+          up|down|dhcp6-change|reapply) ;;
           *) exit 0 ;;
         esac
 
-        # Nothing to fix if this link never had an IPv6 default route to begin
-        # with — the common v4-only case, and it keeps the poll below off the
-        # path of every ordinary link-up.
-        $ip -6 route show default dev "$iface" 2>/dev/null | $grep -q . || exit 0
-
-        # A global-scope address that is not ULA — one the internet could
-        # actually route a reply back to. Note scope global already excludes
-        # fe80::/10, so only fc00::/7 has to be filtered out by hand.
+        # A global-scope address that is not ULA, on any non-tunnel link — one
+        # the internet could actually route a reply back to. Note scope global
+        # already excludes fe80::/10, so only fc00::/7 has to be filtered out
+        # by hand. With -o, field 2 is the interface and field 4 the address.
         has_real_v6() {
-          $ip -6 -o addr show dev "$iface" scope global 2>/dev/null             | $awk '{print $4}' | $grep -qvE '^f[cd]'
+          $ip -6 -o addr show scope global 2>/dev/null \
+            | $awk '$2 !~ /^(lo|wg0|tailscale0|CloudflareWARP)$/ {print $4}' \
+            | $grep -qvE '^f[cd]'
+        }
+
+        blocker_present() {
+          $ip -6 route show default 2>/dev/null \
+            | $grep -qE '^unreachable default .*proto static metric 1( |$)'
         }
 
         # SLAAC lands a second or two after the RA and fires no dispatcher
-        # event of its own, so poll instead of judging the link on first look.
-        # A link with working v6 leaves here immediately; only the broken case
-        # pays the wait.
-        n=0
-        while [ "$n" -lt 6 ]; do
-          has_real_v6 && exit 0
-          $sleep 1
-          n=$((n + 1))
-        done
+        # event of its own, so a link that has just been handed an RA default
+        # gets a moment before it is judged. A link with working v6 leaves the
+        # loop immediately; a v4-only link with no RA skips it entirely.
+        if [ "$action" != down ] \
+          && $ip -6 route show default dev "$iface" proto ra 2>/dev/null | $grep -q .; then
+          n=0
+          while [ "$n" -lt 6 ] && ! has_real_v6; do
+            $sleep 1
+            n=$((n + 1))
+          done
+        fi
 
-        # Loop: `ip -6 route del` removes one match per call, and a link can
-        # end up with more than one default (two RAs, or a stale one).
-        deleted=0
-        while $ip -6 route show default dev "$iface" 2>/dev/null | $grep -q .; do
-          $ip -6 route del default dev "$iface" 2>/dev/null || break
-          deleted=1
-        done
-
-        if [ "$deleted" = 1 ]; then
-          echo "$iface: removed unusable IPv6 default route (link has no global v6 address)"
+        if has_real_v6; then
+          if blocker_present; then
+            $ip -6 route del unreachable default proto static metric 1 2>/dev/null
+            echo "$iface $action: global v6 present, removed IPv6 default blocker"
+          fi
+        elif ! blocker_present; then
+          $ip -6 route replace unreachable default proto static metric 1
+          echo "$iface $action: no global v6 on any link, installed IPv6 default blocker"
         fi
         exit 0
       '';
