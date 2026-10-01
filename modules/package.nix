@@ -30,6 +30,7 @@
   # performance mode, and D-Bus notifications while a game is running.
   programs.gamemode.enable = true;
   programs.steam.enable = true;
+  programs.kdeconnect.enable = true;
 
   environment.systemPackages = with pkgs; [
     kitty
