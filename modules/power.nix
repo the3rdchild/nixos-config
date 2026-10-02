@@ -233,7 +233,12 @@
   # polling loop to save power would be self-defeating.
   systemd.services.power-profile-tuning = {
     description = "Cap CPU power while the power-saver profile is active";
-    wantedBy = [ "multi-user.target" ];
+    # graphical.target, not multi-user.target. ppd's own unit is ordered
+    # After=multi-user.target, and a target is implicitly ordered after
+    # everything it Wants — so wantedBy multi-user closed the loop
+    # multi-user -> this -> ppd -> multi-user, and systemd broke it at every
+    # boot by deleting this job. The service simply never ran.
+    wantedBy = [ "graphical.target" ];
     after = [ "power-profiles-daemon.service" ];
     wants = [ "power-profiles-daemon.service" ];
     serviceConfig = {

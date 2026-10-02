@@ -60,6 +60,8 @@ let
   # Polled, not evented: these are plain kobject attributes and the driver
   # never calls sysfs_notify, so there is nothing to wait on. Polling buys
   # self-healing anyway, which a one-shot latch would not have — see below.
+  ppctl = "${pkgs.power-profiles-daemon}/bin/powerprofilesctl";
+
   acer-fan-max = pkgs.writeShellScriptBin "acer-fan-max" ''
     S=${fanSysfs}
     PIN_PROFILE=4
@@ -85,7 +87,49 @@ let
       exit 0
     fi
 
+    # ── Carry an EC profile chosen outside ppd back into ppd.
+    #
+    # The bridge only runs one way: ppd -> platform_profile -> EC. A profile
+    # picked in the acer-ec web UI (or a bare sysfs write) moves the EC and
+    # its fan curve but leaves ppd where it was, so profile 4 ran with ppd
+    # still on "balanced" — EPP balance_performance instead of performance,
+    # and the bar showing the wrong button.
+    #
+    # 1/2/4 map onto ppd's power-saver/balanced/performance, and ppd writes
+    # the same value straight back to the EC, so there is no loop. 3 has no
+    # ppd equivalent: handing it to ppd would push the EC to 2 or 4 and undo
+    # the choice, so ppd is left alone and the EPP is written directly. 2 also
+    # writes it, because a 3 -> 2 move never changes ppd and nothing else
+    # would take the EPP back down.
+    sync_ppd() {
+      case "$1" in
+        1) ppd=power-saver; epp= ;;
+        2) ppd=balanced;    epp=balance_performance ;;
+        3) ppd=;            epp=performance ;;
+        4) ppd=performance; epp=performance ;;
+        *) return 0 ;;
+      esac
+      if [ -n "$ppd" ] && [ "$(${ppctl} get 2>/dev/null)" != "$ppd" ]; then
+        ${ppctl} set "$ppd" 2>/dev/null || true
+      fi
+      if [ -n "$epp" ]; then
+        for f in /sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference; do
+          echo "$epp" > "$f" 2>/dev/null || true
+        done
+      fi
+    }
+
+    # The first reading is only remembered, never acted on. At boot the EC
+    # comes up on profile_param=2 before ppd restores its saved profile;
+    # syncing that 2 would override the user's last choice with "balanced".
+    last=$(cat "$S/profile" 2>/dev/null || echo "")
+
     while :; do
+      cur=$(cat "$S/profile" 2>/dev/null || echo "")
+      if [ -n "$cur" ] && [ "$cur" != "$last" ]; then
+        sync_ppd "$cur"
+        last=$cur
+      fi
       # Missing sysfs is not an error: the module may not be loaded yet, or may
       # be mid-reload after a kernel update. Just keep looking.
       if [ -r "$S/profile" ] && [ "$(cat "$S/profile")" = "$PIN_PROFILE" ]; then

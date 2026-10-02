@@ -72,6 +72,12 @@
     powerManagement.enable = true;
     powerManagement.finegrained = true;
 
+    # Dynamic Boost (nvidia-powerd): lets the driver shift budget from an idle
+    # CPU to the GPU, 60 W default -> 75 W max on this RTX 3050. The driver
+    # reports "Notebook Dynamic Boost: Supported"; without the daemon the
+    # extra 15 W is simply never offered.
+    dynamicBoost.enable = true;
+
     prime = {
       offload = {
         enable = true;

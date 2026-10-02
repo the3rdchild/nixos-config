@@ -109,7 +109,7 @@
     editorSvc = limit "Service" "2G" "3G";
   in {  
     # flatpak runs every app in its own scope, whoever launched it.
-    ${scope "app-flatpak-app.zen_browser.zen-"} = limit "Scope" "1.5G" "2.5G";
+    ${scope "app-flatpak-app.zen_browser.zen-"} = limit "Scope" "3G" "4.5G";
 
     # `uwsm app`: launcher, SUPER+SHIFT+V, Dolphin's Open with VS Code.
     ${scope "app-Hyprland-firefox-"} = browser;
