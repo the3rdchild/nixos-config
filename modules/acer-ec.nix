@@ -119,10 +119,15 @@ let
       fi
     }
 
-    # The first reading is only remembered, never acted on. At boot the EC
-    # comes up on profile_param=2 before ppd restores its saved profile;
-    # syncing that 2 would override the user's last choice with "balanced".
+    # The first reading is synced only when it is not the boot default. At
+    # boot the EC comes up on profile_param=2 before ppd restores its saved
+    # profile; syncing that 2 would override the user's last choice with
+    # "balanced". Anything else means the unit was restarted (nixos-rebuild
+    # switch) under an already-chosen profile, which must still reach ppd.
     last=$(cat "$S/profile" 2>/dev/null || echo "")
+    if [ -n "$last" ] && [ "$last" != 2 ]; then
+      sync_ppd "$last"
+    fi
 
     while :; do
       cur=$(cat "$S/profile" 2>/dev/null || echo "")
