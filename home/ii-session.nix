@@ -2172,6 +2172,17 @@ if restore then
 end
 IIGENERAL
 
+    # Settings > Animations presets write shellOverrides/animations.lua, but
+    # upstream hyprland.lua never requires it, so picking a preset did nothing
+    # (windows kept general.lua's animations). Loaded last so the preset wins;
+    # guarded because the file only exists once a preset has been chosen.
+    grep -q '^require("hyprland.shellOverrides.main")$' $out/.config/hypr/hyprland.lua
+    cat >> $out/.config/hypr/hyprland.lua <<'IIANIM'
+if is_file_exists(HOME .. "/.config/hypr/hyprland/shellOverrides/animations.lua") then
+    require("hyprland.shellOverrides.animations")
+end
+IIANIM
+
     # ── Clipboard: picking an entry pastes it.
     #
     # Two upstream problems. Cliphist.paste() exists but its classic-cliphist
