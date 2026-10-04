@@ -11,75 +11,71 @@
 
     settings = {
       format = lib.concatStrings [
-        "[](color_red)"
+        "[](color_slate)"
         "$os"
-        "[](bg:color_orange fg:color_red)"
+        "[](bg:color_dusk fg:color_slate)"
         "$directory"
-        "[](fg:color_orange bg:color_yellow)"
+        "[](fg:color_dusk bg:color_stone)"
         "$git_branch"
-        "[](fg:color_yellow bg:color_green)"
+        "[](fg:color_stone bg:color_sand)"
         "$git_status"
-        "[](fg:color_green bg:color_aqua)"
+        "[](fg:color_sand bg:color_cream)"
         "$nix_shell"
-        "[](fg:color_aqua bg:color_blue)"
+        "[](fg:color_cream bg:color_peach)"
         "$cmd_duration"
-        "[](fg:color_blue bg:color_purple)"
+        "[](fg:color_peach bg:color_clay)"
         "$time"
-        "[](fg:color_purple)"
+        "[](fg:color_clay)"
       ];
 
-      palette = "tokyo_night";
-      palettes.tokyo_night = {
-        color_fg_light = "#c0caf5";   # For dark backgrounds
-        color_fg_dark  = "#3b4261";   # For light backgrounds
+      palette = "sandstone";
+      palettes.sandstone = {
+        color_fg_light = "#f7efd2";   # For dark segments (slate, dusk, stone)
+        color_fg_dark  = "#2e3b46";   # For light segments (sand → clay)
 
-        color_red    = "#f7768e";
-        color_orange = "#ff9e64";
-        color_yellow = "#e0af68";
-        color_green  = "#9ece6a";
-        color_aqua   = "#2ac3de";
-        color_blue   = "#7aa2f7";
-        color_purple = "#bb9af7";
-
-        color_bg1    = "#1a1b26";
-        color_bg2    = "#292e42";
-        color_bg3    = "#414868";
+        color_slate = "#475c6c";
+        color_dusk  = "#697178";      # blend: slate → stone
+        color_stone = "#8a8583";
+        color_sand  = "#eed7a1";
+        color_cream = "#f7efd2";
+        color_peach = "#e2bd9a";      # blend: cream → clay
+        color_clay  = "#a67352";
       };
 
       os = {
         disabled = false;
-        style = "bg:color_red bold fg:color_fg_dark";
+        style = "bg:color_slate bold fg:color_fg_light";
         symbols = {
           NixOS = " ";
         };
       };
 
       directory = {
-        style = "bold fg:color_fg_dark bg:color_orange";
+        style = "bold fg:color_fg_light bg:color_dusk";
         format = "[ $path ]($style)";
         truncation_length = 3;
       };
 
       git_branch = {
         symbol = "";
-        style = "bg:color_yellow";
-        format = "[[ $symbol $branch ](bold fg:color_fg_dark bg:color_yellow)]($style)";
+        style = "bg:color_stone";
+        format = "[[ $symbol $branch ](bold fg:color_fg_light bg:color_stone)]($style)";
       };
 
       git_status = {
-        style = "bg:color_green bold fg:color_fg_dark";
+        style = "bg:color_sand bold fg:color_fg_light";
         format = "[$all_status$ahead_behind]($style)";
       };
 
       nix_shell = {
         format = "[ via nix $name ]($style)";
-        style = "bg:color_aqua bold fg:color_fg_dark";
+        style = "bg:color_cream bold fg:color_fg_dark";
       };
 
       cmd_duration = {
         format = "[ 󰔛 $duration ]($style)";
         disabled = false;
-        style = "bg:color_blue bold fg:color_fg_dark";
+        style = "bg:color_peach bold fg:color_fg_dark";
         show_notifications = false;
         min_time_to_notify = 60000;
       };
@@ -87,8 +83,8 @@
       time = {
         disabled = false;
         time_format = "%R";
-        style = "bg:color_purple";
-        format = "[[   $time ](bold fg:color_fg_dark bg:color_purple)]($style)";
+        style = "bg:color_clay";
+        format = "[[   $time ](bold fg:color_fg_light bg:color_clay)]($style)";
       };
 
       line_break = {
@@ -97,8 +93,8 @@
 
       character = {
         disabled = false;
-        success_symbol = "[  ](bold fg:color_green)";
-        error_symbol = "[  ](bold fg:color_red)";
+        success_symbol = "[  ](bold fg:color_slate)";
+        error_symbol = "[  ](bold fg:color_clay)";
       };
     };
   };
