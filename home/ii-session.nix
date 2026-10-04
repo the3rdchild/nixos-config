@@ -2183,6 +2183,39 @@ if is_file_exists(HOME .. "/.config/hypr/hyprland/shellOverrides/animations.lua"
 end
 IIANIM
 
+    # ── The lock screen palette must not leak into the desktop.
+    #
+    # Setting a lock screen wallpaper runs switchwall.sh --colors_lock, which
+    # is meant to produce colors-lock.json and nothing else. Two things leaked:
+    #
+    #   pre_process() still ran, so a dark lock wallpaper behind a light
+    #   desktop wrote prefer-dark to dconf. Zen, VS Code and every GTK/Qt app
+    #   follow that key live and turned dark while the shell stayed light,
+    #   until they were restarted after the next real wallpaper change.
+    #
+    #   matugen writes every target in matugen/config.toml, but only
+    #   colors.json and the two gtk.css were backed up and put back — so
+    #   Hyprland's border colours, fuzzel, hyprlock and color.txt silently
+    #   took the lock palette.
+    #
+    # The mode is still derived from the lock image; it only steers that
+    # palette now, not the session.
+    substituteInPlace $qs/scripts/colors/switchwall.sh \
+      --replace-fail '    pre_process "$mode_flag"' \
+                     '    [[ -n "$colors_lock_flag" ]] || pre_process "$mode_flag"' \
+      --replace-fail '        "$XDG_CONFIG_HOME/gtk-4.0/gtk.css"' \
+                     '        "$XDG_CONFIG_HOME/gtk-4.0/gtk.css"
+        "$XDG_CONFIG_HOME/hypr/hyprland/colors.lua"
+        "$XDG_CONFIG_HOME/hypr/hyprlock/colors.conf"
+        "$XDG_CONFIG_HOME/fuzzel/fuzzel_theme.ini"
+        "$STATE_DIR/user/generated/color.txt"
+        "$STATE_DIR/user/generated/wallpaper/path.txt"'
+    # Guard against matugen gaining a target this list does not restore.
+    [ "$(grep -c "^output_path" $out/.config/matugen/config.toml)" = "8" ] || {
+      echo "matugen/config.toml: target count changed, update the colors_lock restore list" >&2
+      exit 1
+    }
+
     # ── Clipboard: picking an entry pastes it.
     #
     # Two upstream problems. Cliphist.paste() exists but its classic-cliphist
@@ -2553,8 +2586,9 @@ in {
   # ── VS Code follows the session's light/dark inside this config root too.
   #
   # ../home/vscode.nix already solves this for session A: vscode-theme-settings
-  # asserts window.autoDetectColorScheme plus the preferred light and dark
-  # themes into Code/User/settings.json, editing the JSONC in place rather than
+  # writes the theme matching dconf's color-scheme into Code/User/settings.json
+  # (and its vscode-theme-sync watcher redoes it live, for this root too),
+  # editing the JSONC in place rather than
   # replacing it, because VS Code rewrites that file itself and a store symlink
   # would make it drop every setting written that way.
   #

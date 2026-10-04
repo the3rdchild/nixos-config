@@ -8,22 +8,62 @@
 pkgs.writers.writePython3Bin "vscode-theme-settings" {
   flakeIgnore = [ "E501" ];
 } ''
-  """Assert VS Code's three auto-theme keys without disturbing the rest."""
+  """Point VS Code's theme at the session's light/dark mode, touching nothing else."""
 
   import json
   import os
   import re
+  import subprocess
 
   PATH = os.path.join(
       os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
       "Code", "User", "settings.json",
   )
 
+  # Not "Light+": VS Code 1.129 lists it, yet silently keeps the current
+  # theme when workbench.colorTheme or preferredLightColorTheme names it
+  # (tested live; "Light Modern" in the same spot applies at once). That
+  # dead light theme was half of why light/dark never switched live.
+  LIGHT = "Light Modern"
+  DARK = "Dark+"
+
+  # autoDetectColorScheme is off on purpose. It follows Electron's
+  # nativeTheme, which here only ever flips one way: dark -> applied live,
+  # light -> VS Code stays dark until restarted, even with a valid light
+  # theme and the portal emitting SettingChanged (checked with dbus-monitor).
+  # VS Code does reload settings.json live, so the mode is written there
+  # instead, by the dconf watcher in ./vscode.nix.
   WANTED = {
-      "window.autoDetectColorScheme": True,
-      "workbench.preferredLightColorTheme": "Light+",
-      "workbench.preferredDarkColorTheme": "Dark+",
+      "window.autoDetectColorScheme": False,
+      "workbench.preferredLightColorTheme": LIGHT,
+      "workbench.preferredDarkColorTheme": DARK,
   }
+
+
+  def session_theme():
+      """The theme for dconf's color-scheme, or None if it cannot be read."""
+      # dconf opens $XDG_CONFIG_HOME/dconf/user, and XDG_CONFIG_HOME here is
+      # the VS Code root being edited. Drop it so the read always hits the
+      # one shared database in ~/.config (see sharedFromConfigHome in
+      # ./ii-session.nix).
+      env = {k: v for k, v in os.environ.items() if k != "XDG_CONFIG_HOME"}
+      try:
+          value = subprocess.run(
+              ["${pkgs.dconf}/bin/dconf", "read", "/org/gnome/desktop/interface/color-scheme"],
+              capture_output=True, text=True, check=True, env=env,
+          ).stdout.strip().strip("'")
+      except (OSError, subprocess.CalledProcessError):
+          return None
+      if value == "prefer-dark":
+          return DARK
+      if value in ("prefer-light", "default"):
+          return LIGHT
+      return None
+
+
+  theme = session_theme()
+  if theme:
+      WANTED["workbench.colorTheme"] = theme
 
   # Only scalars — these three keys never hold an object or array, and not
   # matching containers keeps the replacement from swallowing a brace.
@@ -138,10 +178,13 @@ pkgs.writers.writePython3Bin "vscode-theme-settings" {
           print("vscode-theme-settings: edit did not verify, settings.json left untouched")
           return
 
-      staging = PATH + ".vscode-theme-settings"
-      with open(staging, "w", encoding="utf-8") as handle:
+      # In place, not a rename over it: VS Code watches this inode, and its
+      # log showed "Watcher shutdown because watched path got deleted" after a
+      # replace — a dead watcher means the live theme switch never lands. An
+      # in-place write was verified to reload while VS Code was running.
+      with open(PATH, "r+", encoding="utf-8") as handle:
           handle.write(new)
-      os.replace(staging, PATH)
+          handle.truncate()
 
 
   main()
