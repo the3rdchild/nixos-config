@@ -1702,6 +1702,27 @@ ACTIVATE
     fi
     printf '\n[colors-dark]\nalpha=0.85\n\n[colors-light]\nalpha=0.85\n' >> $out/.config/foot/foot.ini
 
+    # ── kitty: the SUPER+T terminal, translucent like foot.
+    #
+    # Upstream lists foot first in launch_first_available, so with both
+    # installed foot always won; kitty moves to the front and foot stays as
+    # the fallback. Every other terminal launch in the shell (apps.terminal,
+    # fuzzel, kdeglobals) was already `kitty -1`.
+    #
+    # Opacity goes in kitty.conf, not the generated kitty-theme.conf: that
+    # file is rebuilt from a template on every wallpaper change. Unlike foot,
+    # kitty keeps background_opacity across the OSC 11 that sequences.txt
+    # replays, so one line covers both light and dark. Same 0.85 as foot;
+    # the blur behind it is Hyprland's decoration:blur.
+    substituteInPlace $out/.config/hypr/hyprland/variables.lua \
+      --replace-fail "launch_first_available.sh 'foot' 'kitty -1'" \
+                     "launch_first_available.sh 'kitty -1' 'foot'"
+    if grep -q '^background_opacity' $out/.config/kitty/kitty.conf; then
+      echo "kitty.conf: upstream set background_opacity — merge 0.85 into it" >&2
+      exit 1
+    fi
+    printf '\n# Translucent, like foot.ini (alpha=0.85)\nbackground_opacity 0.85\n' >> $out/.config/kitty/kitty.conf
+
     # ── Terminal palette: make the generated copies writable.
     #
     # applycolor.sh builds terminal/sequences.txt (and kitty-theme.conf) by

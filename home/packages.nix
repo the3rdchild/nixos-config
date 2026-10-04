@@ -27,7 +27,7 @@
     # declared next to the dots that shipped its config. Nothing in
     # ./ii-session.nix calls any of them by name, which is exactly why they
     # are here and not there.
-    foot # second terminal; kitty is the default, in ../modules/package.nix
+    foot # fallback terminal; kitty (../modules/package.nix) is the SUPER+T default
     btop
     fastfetch
     micro

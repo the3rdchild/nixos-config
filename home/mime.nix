@@ -1,7 +1,7 @@
 { pkgs, lib, ... }:
 let
   zen = "app.zen_browser.zen.desktop";
-  micro = "micro-foot.desktop";
+  micro = "micro-kitty.desktop";
   ark = "org.kde.ark.desktop";
 
   assoc = app: types: lib.genAttrs types (_: [ app ]);
@@ -25,10 +25,10 @@ in
 
   home.packages = [ pkgs.kdePackages.ark ];
 
-  # micro has no .desktop file of its own; run it inside foot.
-  xdg.desktopEntries.micro-foot = {
-    name = "Micro (foot)";
-    exec = "foot micro %F";
+  # micro has no .desktop file of its own; run it inside kitty.
+  xdg.desktopEntries.micro-kitty = {
+    name = "Micro (kitty)";
+    exec = "kitty micro %F";
     terminal = false;
     icon = "accessories-text-editor";
     mimeType = [ "text/plain" ];
@@ -86,8 +86,8 @@ in
   # kdeglobals and fell back to xterm. KDE apps rewrite kdeglobals at runtime
   # (colour scheme, accent), so only these two keys are set, not the file.
   home.activation.kdeTerminal = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
-    run ${pkgs.kdePackages.kconfig}/bin/kwriteconfig6 --file kdeglobals --group General --key TerminalApplication foot
-    run ${pkgs.kdePackages.kconfig}/bin/kwriteconfig6 --file kdeglobals --group General --key TerminalService foot.desktop
+    run ${pkgs.kdePackages.kconfig}/bin/kwriteconfig6 --file kdeglobals --group General --key TerminalApplication kitty
+    run ${pkgs.kdePackages.kconfig}/bin/kwriteconfig6 --file kdeglobals --group General --key TerminalService kitty.desktop
   '';
 
   # Overwrites the old hand-edited ~/.config/mimeapps.list (kept as .backup).
