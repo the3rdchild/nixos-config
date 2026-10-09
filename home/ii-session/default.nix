@@ -59,6 +59,8 @@
   capture = import ./capture.nix args;
   display = import ./display-power.nix args;
   inherit (display) displayPower;
+  keybinds = import ./keybinds.nix args;
+  inherit (keybinds) volumeControlToggle;
 
   # ── quickshell itself: the `qs` binary both configs run under.
   #
@@ -89,33 +91,6 @@
       withX11 = false;
       withI3 = false;
     }).withModules [ pkgs.qt6.qtimageformats ];
-
-  # ── SUPER+SHIFT+B → pwvucontrol, as a show/hide toggle.
-  #
-  # Also inherited from ../home/caelestia.nix, where session B's keybind patch
-  # already borrowed it (see the SUPER+SHIFT+B rewrite in `dots` below, which
-  # is the only caller now).
-  #
-  # pwvucontrol is GTK4 without single-instance handling, so a plain
-  # `exec_cmd pwvucontrol` bind stacks a fresh window on every press. This
-  # does the three-state toggle instead: launch if absent, focus if open but
-  # unfocused, close if it is the active window.
-  #
-  # The class is matched case-insensitively on the substring rather than
-  # pinned to the literal `com.saivert.pwvucontrol` app-id, so the bind keeps
-  # working if upstream renames it.
-  volumeControlToggle = pkgs.writeShellScriptBin "volume-control-toggle" ''
-    jq=${pkgs.jq}/bin/jq
-    addr=$(hyprctl clients -j | $jq -r 'first(.[] | select(.class | test("pwvucontrol"; "i")) | .address) // empty')
-
-    if [ -z "$addr" ]; then
-      exec ${pkgs.pwvucontrol}/bin/pwvucontrol
-    elif [ "$addr" = "$(hyprctl activewindow -j | $jq -r '.address // empty')" ]; then
-      hyprctl dispatch closewindow "address:$addr"
-    else
-      hyprctl dispatch focuswindow "address:$addr"
-    fi
-  '';
 
   # ── Gemini 3.6 Flash in the AI sidebar.
   #
@@ -172,108 +147,6 @@
                 "api_format": "openai",
                 "extraParams": { "tools": [] },
             }),
-  '';
-
-  # ── SUPER+SHIFT+Q (hold): close every window, one at a time.
-  #
-  # Current workspace first, then 1, 2, 3, … and the special workspaces last,
-  # switching to each so both the workspace slide and each window's popin-out
-  # animation are visible. Releasing Q (with SUPER+SHIFT still down) or SUPER
-  # stops it where it is; letting go of SHIFT alone does not.
-  #
-  # Press and release are two separate exec_cmds, so nothing orders them: on a
-  # quick tap the release can land before this script has even started. The
-  # keybind therefore hands both halves the same per-press token, and "stop"
-  # just drops a file named after it — whichever side runs first, the start
-  # side sees it. The 300ms grace before the first close is what makes a tap a
-  # no-op rather than "closes one window".
-  #
-  # Each window gets the same polite close as SUPER+Q; one that is still there
-  # 1.5s later (an unsaved-changes prompt, a hung app) is force-killed —
-  # Hyprland's kill dispatcher first, then SIGKILL on its pid as a backstop.
-  closeSequential = pkgs.writeShellScript "ii-close-sequential" ''
-    export PATH=${lib.makeBinPath [ pkgs.hyprland pkgs.jq pkgs.libnotify pkgs.coreutils pkgs.findutils pkgs.util-linux ]}
-    mode=$1 token=$2
-    [ -n "$token" ] || exit 1
-    dir="''${XDG_RUNTIME_DIR:-/tmp}/ii-close-sequential"
-    mkdir -p "$dir"
-    stopf="$dir/stop-$token"
-    if [ "$mode" = stop ]; then touch "$stopf"; exit 0; fi
-
-    find "$dir" -name 'stop-*' -mmin +1 -delete 2>/dev/null
-    exec 9>"$dir/lock"
-    flock -n 9 || exit 0
-
-    stopped() { [ -e "$stopf" ]; }
-    # Sleep $1 ms in 50ms slices; fails as soon as the keys are released.
-    nap() {
-      local n=$(( $1 / 50 ))
-      while [ "$n" -gt 0 ]; do
-        stopped && return 1
-        sleep 0.05
-        n=$(( n - 1 ))
-      done
-      ! stopped
-    }
-    alive() { hyprctl clients -j | jq -e --arg a "$1" 'any(.[]; .address == $a)' >/dev/null; }
-
-    # Counted as "windows from the starting set that are gone", so a
-    # force-kill that takes several windows of one process with it (every
-    # VS Code window shares a pid) is counted right.
-    before=$(hyprctl clients -j | jq -c '[.[].address]')
-    finish() {
-      rm -f "$stopf"
-      n=$(hyprctl clients -j | jq --argjson s "$before" '$s - [.[].address] | length')
-      [ "''${n:-0}" -gt 0 ] || exit 0
-      if stopped; then body="Stopped on release"; else body="All workspaces done"; fi
-      notify-send "Closed $n windows" "$body" -a Hyprland -i window-close
-    }
-    trap finish EXIT
-
-    nap 300 || exit 0
-
-    cur=$(hyprctl activeworkspace -j | jq '.id')
-    mapfile -t order < <(hyprctl workspaces -j | jq -r --argjson cur "$cur" '
-      [.[] | select(.windows > 0)] as $ws
-      | ($ws | map(select(.id == $cur)))
-        + ($ws | map(select(.id > 0 and .id != $cur)) | sort_by(.id))
-        + ($ws | map(select(.id < 0)) | sort_by(.name))
-      | .[] | "\(.id) \(.name)"')
-
-    for entry in "''${order[@]}"; do
-      id=''${entry%% *} name=''${entry#* }
-      if [ "$id" -lt 0 ]; then
-        # toggle_special hides it again if it is already open somewhere.
-        hyprctl monitors -j | jq -e --arg n "$name" 'any(.[]; .specialWorkspace.name == $n)' >/dev/null ||
-          hyprctl dispatch "hl.dsp.workspace.toggle_special(\"''${name#special:}\")" >/dev/null
-        nap 400 || exit 0
-      elif [ "$id" != "$(hyprctl activeworkspace -j | jq '.id')" ]; then
-        hyprctl dispatch "hl.dsp.focus({ workspace = $id })" >/dev/null
-        nap 400 || exit 0
-      fi
-
-      # Most recently focused first, i.e. the window actually on top. The
-      # cap only guards against something that respawns its window forever.
-      for _ in $(seq 1 64); do
-        read -r addr pid < <(hyprctl clients -j | jq -r --argjson id "$id" '
-          [.[] | select(.workspace.id == $id)] | sort_by(.focusHistoryID) | first
-          | select(. != null) | "\(.address) \(.pid)"')
-        [ -n "$addr" ] || break
-
-        hyprctl dispatch "hl.dsp.window.close({ window = \"address:$addr\" })" >/dev/null
-        for _ in $(seq 1 15); do
-          alive "$addr" || break
-          nap 100 || exit 0
-        done
-        if alive "$addr"; then
-          hyprctl dispatch "hl.dsp.window.kill({ window = \"address:$addr\" })" >/dev/null
-          nap 500 || exit 0
-          if alive "$addr" && [ "''${pid:-0}" -gt 1 ]; then kill -9 "$pid" 2>/dev/null; fi
-        fi
-        addr=""
-        nap 250 || exit 0
-      done
-    done
   '';
 
   # ── Restarting the shell.
@@ -1351,36 +1224,7 @@ ${kde.patch}
       $out/.config/hypr/hyprland/variables.lua
     grep -q 'hl.env("qsConfig", "${qsConfig}")' $out/.config/hypr/hyprland/variables.lua
 
-    # ── SUPER+I opens Settings in whichever shell is running.
-    #
-    # end4-pC's Settings is an overlay panel reached over IPC
-    # (modules/ii/settings/Settings.qml:170); its README asks for SUPER+Escape.
-    # SUPER+I is used instead because ii already binds it to "App: Settings
-    # app" (keybinds.lua:354) and that binding is dead under end4-pC — its
-    # first candidate is `qs -p .../$qsConfig/settings.qml`, a file end4-pC
-    # doesn't have, so today it falls through to systemsettings.
-    #
-    # Hyprland fires every bind that matches, so both lines are needed and both
-    # have to be inert in the other shell: the global is a no-op under ii (no
-    # such IPC handler there), and the exec is guarded on the settings.qml that
-    # only ii ships. Exactly one thing happens either way.
-    #
-    # SUPER+ALT+S was the first idea and is not free — keybinds.lua:241 uses it
-    # for "Window: Send to scratchpad".
-    sed -i 's|^hl.bind("SUPER + I", hl.dsp.exec_cmd(settingsApp), { description = "App: Settings app" })$|hl.bind("SUPER + I", hl.dsp.global("quickshell:settingsToggle"), { description = "App: Settings" })\nhl.bind("SUPER + I", hl.dsp.exec_cmd("[ -f $HOME/.config/quickshell/$qsConfig/settings.qml ] \&\& " .. settingsApp))|' \
-      $out/.config/hypr/hyprland/keybinds.lua
-    grep -q 'quickshell:settingsToggle' $out/.config/hypr/hyprland/keybinds.lua
-
-    # ── SUPER+W is unbound.
-    #
-    # Upstream opens the browser on it; asked to have it removed outright
-    # rather than moved. Checked before and after so an upstream rewording
-    # fails the build instead of leaving the bind silently in place.
-    grep -q '^hl.bind("SUPER + W", hl.dsp.exec_cmd(browser),' $out/.config/hypr/hyprland/keybinds.lua
-    sed -i '/^hl.bind("SUPER + W", hl.dsp.exec_cmd(browser),/d' \
-      $out/.config/hypr/hyprland/keybinds.lua
-    [ "$(grep -c '"SUPER + W"' $out/.config/hypr/hyprland/keybinds.lua)" = "0" ] || exit 1
-
+${keybinds.patch}
 ${capture.patch}
 ${display.patch}
     # ── Light/dark follows the wallpaper (see autoLightDark above).
@@ -1789,96 +1633,6 @@ IIANIM
       --replace-fail \
         'hl.dsp.exec_cmd("killall ydotool qs quickshell; qs -c $qsConfig &")' \
         'hl.dsp.exec_cmd("${shellRestart}")'
-
-    # ── The four app keys.
-    #
-    # Three of them (SUPER+SHIFT+Z, +V, +O) were chosen to match the caelestia
-    # session key for key, back when both sessions existed and an editor that
-    # opened on one and did nothing on the other was the worst outcome. That
-    # session is gone; the keys stay because they are the ones in muscle
-    # memory, which is the same reason the capture keys above were aligned.
-    #
-    # The fourth deliberately did NOT match: caelestia put pwvucontrol on
-    # SUPER+B, and here it is SUPER+SHIFT+B, because SUPER+B is upstream's
-    # second key for the left sidebar — a panel caelestia had no equivalent
-    # of. Asked for explicitly, and the asymmetry was the point rather than an
-    # oversight.
-    #
-    # SUPER+SHIFT+B was not free either — it is upstream's "Media: Previous
-    # track" (keybinds.lua:135-136). That is the one thing this change costs,
-    # and it costs little: previous-track keeps XF86AudioPrev (:132, the media
-    # key on the external keyboard, which presents a Consumer Control device)
-    # and SUPER+SHIFT+ALT+mouse:275 (:133). Next/play-pause are
-    # untouched.
-    #
-    # A replacement rather than an added bind, in both directions: Hyprland
-    # fires every bind that matches, so an extra SUPER+SHIFT+B would skip a
-    # track every time the volume window opened.
-    #
-    # volume-control-toggle is defined in the let block above — it came over
-    # from the caelestia session, which was its original home and is now this
-    # bind's only caller. It exists because pwvucontrol is GTK4 with no
-    # single-instance handling: a plain exec stacks a new window on every
-    # press.
-    #
-    # sed with N rather than --replace-fail, because this bind spans two lines
-    # and Nix strips the common indentation from a multi-line string, so the
-    # anchor's continuation line would arrive four spaces short of the file's
-    # — the same trap documented at the LauncherSearch patch above. N pulls
-    # the options line into the pattern space and both become one line.
-    # Counted before and after: the anchor is unique, and so is the
-    # description it carries.
-    before=$(grep -c 'hl.bind("SUPER + SHIFT + B", hl.dsp.exec_cmd("playerctl previous"),' \
-      $out/.config/hypr/hyprland/keybinds.lua)
-    [ "$before" = "1" ] || { echo "SUPER+SHIFT+B: expected 1 anchor, found $before" >&2; exit 1; }
-    sed -i '/^hl.bind("SUPER + SHIFT + B", hl.dsp.exec_cmd("playerctl previous"),$/{N;s|.*|hl.bind("SUPER + SHIFT + B", hl.dsp.exec_cmd("volume-control-toggle"), { description = "App: Volume control" })|}' \
-      $out/.config/hypr/hyprland/keybinds.lua
-    grep -q 'hl.bind("SUPER + SHIFT + B", hl.dsp.exec_cmd("volume-control-toggle")' \
-      $out/.config/hypr/hyprland/keybinds.lua
-    [ "$(grep -c 'Media: Previous track' $out/.config/hypr/hyprland/keybinds.lua)" = "0" ] || exit 1
-    # The left sidebar keeps all three of upstream's keys (SUPER+A, +B, +O);
-    # nothing here touches them.
-    [ "$(grep -c 'quickshell:sidebarLeftToggle"' $out/.config/hypr/hyprland/keybinds.lua)" = "3" ] || exit 1
-
-    # Appended rather than substituted: these three replace nothing, and
-    # keybinds.lua is a flat list of top-level statements, so the end of the
-    # file is as good a place as any and reads as ours rather than upstream's.
-    #
-    # `code`, not `uwsm app -- code` as session A spells it. Session B is
-    # deliberately not uwsm (../modules/ii-session.nix says why), so there is
-    # no uwsm session for `uwsm app` to attach to. The cost is real and worth
-    # naming: ../home/app-limits.nix caps VS Code through the
-    # app-Hyprland-code-<hex>.scope that `uwsm app` creates, so VS Code runs
-    # uncapped in this session. Zen is unaffected — flatpak makes its own
-    # transient scope, which is what that file's drop-in actually targets.
-    cat >> $out/.config/hypr/hyprland/keybinds.lua <<'IIBINDS'
-
---# Apps, aligned with the caelestia session
-hl.bind("SUPER + SHIFT + Z", hl.dsp.exec_cmd("flatpak run app.zen_browser.zen"), { description = "App: Zen browser" })
-hl.bind("SUPER + SHIFT + V", hl.dsp.exec_cmd("code"), { description = "App: VS Code" })
-hl.bind("SUPER + SHIFT + O", hl.dsp.exec_cmd("obsidian"), { description = "App: Obsidian" })
-
---# Close every window one by one while held; letting go of any key stops it
-local closeSeqToken = nil
-local function closeSeqStop()
-    if closeSeqToken then
-        hl.dispatch(hl.dsp.exec_cmd("${closeSequential} stop " .. closeSeqToken))
-        closeSeqToken = nil
-    end
-end
-hl.bind("SUPER + SHIFT + Q", function()
-    closeSeqStop()
-    closeSeqToken = os.time() .. "-" .. math.random(1, 1000000000)
-    hl.dispatch(hl.dsp.exec_cmd("${closeSequential} start " .. closeSeqToken))
-end, { description = "Window: Close all, one by one (hold)" })
-hl.bind("SUPER + SHIFT + Q", closeSeqStop, { release = true })
---# Not bare Q or SHIFT_*: a release bind on a plain key swallows its press
---# even with transparent, so q stopped typing. SUPER_* already carry the same
---# kind of bind upstream (workspaceNumber, top of this file) without harm.
-for _, key in ipairs({ "SUPER_L", "SUPER_R" }) do
-    hl.bind(key, closeSeqStop, { release = true, ignore_mods = true, transparent = true })
-end
-IIBINDS
 
     # ── Bluetooth pairing agent.
     #
