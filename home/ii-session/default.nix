@@ -67,6 +67,8 @@
   video = import ./video-wallpaper.nix args;
   inherit (video) videoFrame videoProxy;
   barIslands = import ./bar-islands.nix args;
+  lightDark = import ./light-dark.nix (args // { inherit videoFrame; });
+  inherit (lightDark) autoLightDarkCtl;
 
   # ── quickshell itself: the `qs` binary both configs run under.
   #
@@ -97,124 +99,6 @@
       withX11 = false;
       withI3 = false;
     }).withModules [ pkgs.qt6.qtimageformats ];
-
-  # ── Automatic light/dark from the wallpaper.
-  #
-  # These dots never look at the wallpaper to decide light or dark. The mode
-  # comes from gsettings and nothing else (switchwall.sh, the
-  # `if [[ -z "$mode_flag" ]]` branch), which is why a white wallpaper still
-  # renders a dark palette — matugen is handed --mode dark and derives a dark
-  # scheme from that image's hues. Picking an accent colour does not change it
-  # either; --color only passes the colour through to matugen.
-  #
-  # This replaces that branch. The decision still lands in the same variable,
-  # so it flows on into `pre_process "$mode_flag"` further down, which is what
-  # writes org.gnome.desktop.interface color-scheme and gtk-theme — so the
-  # portal, GTK, Qt and session A all follow without any extra plumbing.
-  #
-  # On by default, off by one command, because a luminance threshold is always
-  # wrong for some images and you will want to override it. An explicit
-  # --mode still wins: the Settings light/dark buttons keep working as a
-  # one-off, and the next wallpaper change re-derives.
-  # Calibrated against the torii pair, which is the reference: "torii dark"
-  # measures 0.541 and "torii white" 0.907, so anything in (0.541, 0.907] sorts
-  # them correctly. 0.6 is the low end of that window on purpose — it is the
-  # smallest move from a neutral 0.5 that satisfies the constraint, so it
-  # reclassifies torii dark and nothing else in the current set:
-  #
-  #   wallhaven-vg8y8m  0.051  dark
-  #   Cyrene            0.158  dark
-  #   torii dark        0.541  dark   <- the one this threshold exists for
-  #   Kokomi            0.692  light
-  #   wallhaven-exmppk  0.772  light
-  #   Escoffier         0.792  light
-  #   torii white       0.907  light
-  #
-  # Raising it further (0.72 would also make Kokomi dark) is a taste call, not
-  # a correctness one — this single value is the only thing to edit.
-  autoLightDarkThreshold = "0.6";
-
-  autoLightDark = pkgs.writeShellScript "ii-auto-lightdark" ''
-    export PATH=${lib.makeBinPath [ pkgs.imagemagick pkgs.gawk pkgs.coreutils ]}
-    flag="''${XDG_CONFIG_HOME:-$HOME/.config}/illogical-impulse/auto-lightdark"
-
-    # Upstream's rule as the fallback, but read through dconf rather than
-    # gsettings. ../home/qt.nix documents why: glib.bin's gsettings only
-    # reaches the real database when GIO_EXTRA_MODULES points at dconf's GIO
-    # module, and without it every read silently returns the SCHEMA DEFAULT —
-    # 'default' for color-scheme, which this function would then report as
-    # light. A wrong answer that looks like a working read is the worst kind
-    # for something that runs unattended on every wallpaper change.
-    from_dconf() {
-      case "$(${pkgs.dconf}/bin/dconf read /org/gnome/desktop/interface/color-scheme 2>/dev/null | tr -d "'")" in
-        prefer-dark) echo dark ;;
-        *)           echo light ;;
-      esac
-    }
-
-    # Missing flag file means on.
-    # $2 is whatever --mode the caller asked for, empty if none. With auto off
-    # it passes straight through, so upstream's own precedence is untouched:
-    # an explicit mode wins, and with neither it falls back to dconf below.
-    explicit="''${2:-}"
-    passthrough() { [ -n "$explicit" ] && echo "$explicit" || from_dconf; }
-
-    [ "$(cat "$flag" 2>/dev/null)" = "0" ] && { passthrough; exit 0; }
-
-    # Auto on outranks the explicit mode — the Settings light/dark buttons
-    # stop having an effect until `ii-lightdark-auto off`. That is the asked-for
-    # behaviour: one switch decides, rather than two that quietly fight.
-    img="$1"
-
-    # Not every caller passes an image. switchwall.sh regenerates colours from
-    # several paths — a bare run, --noswitch, the shell re-applying after a
-    # restart — and with no image to measure this used to fall through to
-    # dconf, which re-applied whatever mode was already set. The effect was a
-    # mode that latched: change the wallpaper to a dark one, have anything
-    # regenerate colours without naming it, and the old light mode came back
-    # and stayed. So fall back to the wallpaper the shell actually has
-    # configured before falling back to the previous mode.
-    if [ -z "$img" ] || [ ! -f "$img" ]; then
-      cfg="''${XDG_CONFIG_HOME:-$HOME/.config}/illogical-impulse/config.json"
-      img="$(${pkgs.jq}/bin/jq -r '.background.wallpaperPath // empty' "$cfg" 2>/dev/null)"
-    fi
-    [ -n "$img" ] && [ -f "$img" ] || { passthrough; exit 0; }
-    # A video is measured by its still frame, the same one its palette comes
-    # from (see videoFrame).
-    case "''${img,,}" in
-      *.mp4|*.webm|*.mkv|*.avi|*.mov)
-        img="$(${videoFrame} "$img")" || { passthrough; exit 0; } ;;
-    esac
-
-    # Mean of the image collapsed to one grey pixel: 0 is black, 1 is white.
-    mean="$(magick "$img" -colorspace Gray -resize 1x1! -format '%[fx:mean]' info: 2>/dev/null)"
-    [ -n "$mean" ] || { passthrough; exit 0; }
-    # Below the threshold is dark, at or above it is light.
-    awk -v m="$mean" -v t="${autoLightDarkThreshold}" 'BEGIN { print (m >= t) ? "light" : "dark" }'
-  '';
-
-  autoLightDarkCtl = pkgs.writeShellScriptBin "ii-lightdark-auto" ''
-    export PATH=${lib.makeBinPath [ pkgs.jq pkgs.coreutils ]}
-    cfgdir="''${XDG_CONFIG_HOME:-$HOME/.config}/illogical-impulse"
-    flag="$cfgdir/auto-lightdark"
-    state() { [ "$(cat "$flag" 2>/dev/null)" = "0" ] && echo off || echo on; }
-
-    case "''${1:-status}" in
-      status) echo "auto light/dark: $(state)" ;;
-      on|off)
-        mkdir -p "$cfgdir"
-        [ "$1" = "on" ] && echo 1 > "$flag" || echo 0 > "$flag"
-        echo "auto light/dark: $(state)"
-        # Re-derive straight away for the wallpaper that is already set.
-        if [ "$1" = "on" ]; then
-          wp="$(jq -r '.background.wallpaperPath // empty' "$cfgdir/config.json" 2>/dev/null)"
-          [ -n "$wp" ] && exec "''${XDG_CONFIG_HOME:-$HOME/.config}/quickshell/${qsConfig}/scripts/colors/switchwall.sh" --noswitch --image "$wp"
-        fi
-        ;;
-      toggle) [ "$(state)" = "on" ] && exec "$0" off || exec "$0" on ;;
-      *) echo "usage: ii-lightdark-auto [status|on|off|toggle]" >&2; exit 2 ;;
-    esac
-  '';
 
   # ── Zen's accent, from this session's palette.
   #
@@ -308,54 +192,6 @@ ${kde.patch}
 ${keybinds.patch}
 ${capture.patch}
 ${display.patch}
-    # ── Light/dark follows the wallpaper (see autoLightDark above).
-    #
-    # Applied to both shells: each carries its own copy of switchwall.sh.
-    for f in $out/.config/quickshell/*/scripts/colors/switchwall.sh; do
-      [ -e "$f" ] || continue
-      # Inserted before upstream's own block rather than replacing it: with
-      # auto off the helper echoes $mode_flag back unchanged and the original
-      # precedence below runs exactly as written.
-      substituteInPlace "$f" --replace-fail \
-        'if [[ -z "$mode_flag" ]]; then' \
-        'mode_flag="$(${autoLightDark} "$imgpath" "$mode_flag")"
-        if [[ -z "$mode_flag" ]]; then'
-
-      # ── And the write that decision turns into: dconf, not gsettings.
-      #
-      # pre_process() is the only thing that tells the rest of the machine
-      # what mode this wallpaper chose — the portal, GTK, Qt and session A all
-      # read org.gnome.desktop.interface color-scheme and nothing else. It
-      # spelled that write as `gsettings set`, which on a session with no
-      # schemas on XDG_DATA_DIRS exits 1 and prints "No schemas installed" to
-      # a stderr nobody reads. ../modules/hyprland-desktop.nix now puts the
-      # schemas there, so this is no longer load-bearing — but the failure it
-      # covers took months to notice precisely because it was silent, and
-      # dconf removes the dependency rather than satisfying it. Same database,
-      # same D-Bus change notification, no schema lookup; it is what
-      # ../home/qt.nix and the autoLightDark helper above already use, for the
-      # reasons spelled out there.
-      #
-      # sed rather than substituteInPlace, and on one line at a time: the two
-      # writes sit inside an if/elif whose common indentation Nix would strip
-      # from a multi-line anchor. The capture carries the value, so one
-      # expression covers prefer-dark and prefer-light without naming either.
-      #
-      # dconf takes a GVariant, so a string value needs its quotes inside the
-      # argument: "'prefer-dark'", not 'prefer-dark'.
-      before=$(grep -c "gsettings set org.gnome.desktop.interface" "$f" || true)
-      [ "$before" = "4" ] || {
-        echo "pre_process: expected 4 gsettings writes, found $before" >&2
-        exit 1
-      }
-      sed -i \
-        -e "s|gsettings set org\.gnome\.desktop\.interface color-scheme '\(.*\)'|${pkgs.dconf}/bin/dconf write /org/gnome/desktop/interface/color-scheme \"'\1'\"|" \
-        -e "s|gsettings set org\.gnome\.desktop\.interface gtk-theme '\(.*\)'|${pkgs.dconf}/bin/dconf write /org/gnome/desktop/interface/gtk-theme \"'\1'\"|" \
-        "$f"
-      [ "$(grep -c "gsettings set org.gnome.desktop.interface" "$f" || true)" = "0" ] || exit 1
-      [ "$(grep -c "dconf write /org/gnome/desktop/interface" "$f" || true)" = "4" ] || exit 1
-    done
-
     # ── Helpers for the patches below.
     #
     # Most patches touch only the shell that runs, end4-pC: ii's copies of
@@ -378,6 +214,7 @@ ${display.patch}
       cat $TMPDIR/inserted > "$1"
     }
 
+${lightDark.patch}
 ${video.patch}
 ${barIslands.patch}
     # Settings > Animations presets write shellOverrides/animations.lua, but
@@ -390,39 +227,6 @@ if is_file_exists(HOME .. "/.config/hypr/hyprland/shellOverrides/animations.lua"
     require("hyprland.shellOverrides.animations")
 end
 IIANIM
-
-    # ── The lock screen palette must not leak into the desktop.
-    #
-    # Setting a lock screen wallpaper runs switchwall.sh --colors_lock, which
-    # is meant to produce colors-lock.json and nothing else. Two things leaked:
-    #
-    #   pre_process() still ran, so a dark lock wallpaper behind a light
-    #   desktop wrote prefer-dark to dconf. Zen, VS Code and every GTK/Qt app
-    #   follow that key live and turned dark while the shell stayed light,
-    #   until they were restarted after the next real wallpaper change.
-    #
-    #   matugen writes every target in matugen/config.toml, but only
-    #   colors.json and the two gtk.css were backed up and put back — so
-    #   Hyprland's border colours, fuzzel, hyprlock and color.txt silently
-    #   took the lock palette.
-    #
-    # The mode is still derived from the lock image; it only steers that
-    # palette now, not the session.
-    substituteInPlace $qs/scripts/colors/switchwall.sh \
-      --replace-fail '    pre_process "$mode_flag"' \
-                     '    [[ -n "$colors_lock_flag" ]] || pre_process "$mode_flag"' \
-      --replace-fail '        "$XDG_CONFIG_HOME/gtk-4.0/gtk.css"' \
-                     '        "$XDG_CONFIG_HOME/gtk-4.0/gtk.css"
-        "$XDG_CONFIG_HOME/hypr/hyprland/colors.lua"
-        "$XDG_CONFIG_HOME/hypr/hyprlock/colors.conf"
-        "$XDG_CONFIG_HOME/fuzzel/fuzzel_theme.ini"
-        "$STATE_DIR/user/generated/color.txt"
-        "$STATE_DIR/user/generated/wallpaper/path.txt"'
-    # Guard against matugen gaining a target this list does not restore.
-    [ "$(grep -c "^output_path" $out/.config/matugen/config.toml)" = "8" ] || {
-      echo "matugen/config.toml: target count changed, update the colors_lock restore list" >&2
-      exit 1
-    }
 
 ${clipboard.patch}
 ${restart.patch}
