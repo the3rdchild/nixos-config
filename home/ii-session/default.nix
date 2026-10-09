@@ -39,6 +39,20 @@
   # and `qs -c end4-pC` switch at runtime, no rebuild, no logout.
   qsConfig = "end4-pC";
 
+  # Reads one of ./files, filling in its @name@ placeholders from `vars`.
+  # The files hold exactly the text the derivations write, so moving a
+  # script out of a Nix string changes no store path.
+  fill = file: vars:
+    lib.replaceStrings
+      (map (n: "@${n}@") (lib.attrNames vars))
+      (map toString (lib.attrValues vars))
+      (builtins.readFile file);
+
+  args = { inherit config inputs pkgs lib qsConfig fill; };
+
+  python = import ./python.nix args;
+  inherit (python) venv;
+
   # ── quickshell itself: the `qs` binary both configs run under.
   #
   # This used to live in ../home/caelestia.nix, reached through
@@ -94,77 +108,6 @@
     else
       hyprctl dispatch focuswindow "address:$addr"
     fi
-  '';
-
-  # ── The Python "venv".
-  #
-  # Upstream expects ILLOGICAL_IMPULSE_VIRTUAL_ENV to point at a real uv-built
-  # venv in ~/.local/state and activates it in nine places — six shell
-  # wrappers plus three scripts whose shebang is
-  #   #!/usr/bin/env -S _/bin/sh_-c_"source_$(eval echo $I_I_VIRTUAL_ENV)/bin/activate&&exec_python_-E_..."
-  # Rather than patch nine call sites, this builds the interpreter with Nix and
-  # fakes the one file they all reach for: bin/activate. Sourcing it puts the
-  # store env on PATH, which is all those call sites actually want.
-  #
-  # `python -E` in that shebang is the reason this needs checking rather than
-  # assuming: -E makes CPython ignore PYTHONPATH. nixpkgs' python doesn't use
-  # PYTHONPATH — withPackages resolves imports through the env's own prefix —
-  # so -E is harmless here. Verified before this file was written.
-  #
-  # The list is upstream's sdata/uv/requirements.in minus the build-time-only
-  # entries (build, wheel, setuptools-scm), which nothing imports at runtime.
-  pythonEnv = pkgs.python3.withPackages (ps:
-    with ps; [
-      # Actually imported by scripts in both trees.
-      materialyoucolor # 32 imports — the colour engine
-      numpy
-      opencv4 # cv2, used by find_regions / least-busy-region
-      pygobject3 # gi
-      pillow # PIL
-      tqdm
-      loguru
-      click
-      # Invoked as a command by matugen/templates/kde/*-wrapper.sh.
-      kde-material-you-colors
-      # Used by services/gCloud/token-from-key-venv.sh.
-      google-auth
-      requests
-      # Upstream ships these; cheap, and kept so a script that grows a new
-      # import doesn't fail at runtime in a session with no terminal attached.
-      psutil
-      pycairo
-      libsass
-      material-color-utilities
-      setproctitle
-      pywayland
-    ]);
-
-  venv = pkgs.runCommand "illogical-impulse-venv" { } ''
-    mkdir -p $out/bin
-    ln -s ${pythonEnv}/bin/* $out/bin/
-
-    # Sourced, never executed — so no shebang, and it must be valid in both
-    # bash and sh. Mirrors what a real venv's activate does, minus the prompt
-    # mangling and the pyvenv.cfg lookup.
-    cat > $out/bin/activate <<'ACTIVATE'
-VIRTUAL_ENV="@venv@"
-export VIRTUAL_ENV
-_OLD_VIRTUAL_PATH="$PATH"
-PATH="@python@/bin:$PATH"
-export PATH
-deactivate() {
-    if [ -n "''${_OLD_VIRTUAL_PATH:-}" ]; then
-        PATH="$_OLD_VIRTUAL_PATH"
-        export PATH
-        unset _OLD_VIRTUAL_PATH
-    fi
-    unset VIRTUAL_ENV
-    unset -f deactivate
-}
-ACTIVATE
-    substituteInPlace $out/bin/activate \
-      --replace-fail '@venv@' "$out" \
-      --replace-fail '@python@' '${pythonEnv}'
   '';
 
   # ── Gemini 3.6 Flash in the AI sidebar.
@@ -1658,10 +1601,7 @@ ACTIVATE
       -e 's/"JetBrains Mono NF"/"JetBrainsMono NF"/g'
 
     # ── The Python venv.
-    sed -i 's|home_dir \.\. "/.local/state/quickshell/.venv"|"${venv}"|' \
-      $out/.config/hypr/hyprland/env.lua
-    grep -q '${venv}' $out/.config/hypr/hyprland/env.lua
-
+${python.patch}
     # ── FHS paths.
     #
     # start_geoclue_agent.sh already probes /run/current-system/sw, so it works
