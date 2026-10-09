@@ -61,6 +61,7 @@
   inherit (display) displayPower;
   keybinds = import ./keybinds.nix args;
   inherit (keybinds) volumeControlToggle;
+  restart = import ./shell-restart.nix args;
 
   # ── quickshell itself: the `qs` binary both configs run under.
   #
@@ -147,51 +148,6 @@
                 "api_format": "openai",
                 "extraParams": { "tools": [] },
             }),
-  '';
-
-  # ── Restarting the shell.
-  #
-  # Upstream's bind is `killall ydotool qs quickshell; qs -c $qsConfig &`, and
-  # on NixOS the kill half is a no-op: wrapQtAppsHook renames the process, so
-  # /proc/<pid>/comm reads `.quickshell-wra` and killall — which matches on
-  # comm — finds neither `qs` nor `quickshell`. The start half still runs, so
-  # every press of CTRL+SUPER+R left the old instance alive and added another
-  # one: two bars, then three. Upstream knows about this; it is an open TODO in
-  # their own sdata/dist-nix/README.md ("should be .quickshell-wra and
-  # .Hyprland-wrapp when installed via Nix").
-  #
-  # `qs kill` is quickshell's own subcommand and the right answer here. Unlike
-  # the caelestia session — where `qs -c caelestia kill` could never work
-  # because that shell runs from a store path — these configs really do live at
-  # $XDG_CONFIG_HOME/quickshell/<name>, so -c resolves. pkill on the full
-  # command line stays as a backstop for an instance that is too wedged to
-  # answer its IPC socket.
-  shellRestart = pkgs.writeShellScript "ii-shell-restart" ''
-    export PATH=${lib.makeBinPath [ pkgs.procps pkgs.psmisc pkgs.coreutils ]}:$PATH
-    cfg="''${qsConfig:-${qsConfig}}"
-    killall ydotool 2>/dev/null || true
-
-    # `qs kill` terminates ONE instance per call — it prints "Killed <id>" and
-    # returns, leaving any others running. Looping matters because the whole
-    # reason this script exists is that duplicates accumulate.
-    for _ in 1 2 3 4 5; do
-      pgrep -f 'bin/quickshell -c' >/dev/null 2>&1 || break
-      qs -c "$cfg" kill >/dev/null 2>&1 || break
-    done
-
-    # Backstop for an instance too wedged to answer its IPC socket. The pattern
-    # cannot match this script: its own cmdline is the store path below.
-    pkill -f 'bin/quickshell -c' 2>/dev/null || true
-
-    # Wait for them to actually exit. Starting the replacement while the old
-    # one still holds its layer surfaces is how you get two bars for a moment,
-    # and if the old one then fails to exit, permanently.
-    for _ in $(seq 1 50); do
-      pgrep -f 'bin/quickshell -c' >/dev/null 2>&1 || break
-      sleep 0.1
-    done
-
-    exec qs -c "$cfg" -d
   '';
 
   # ── Automatic light/dark from the wallpaper.
@@ -1628,12 +1584,7 @@ IIANIM
       [ "$(grep -c 'Cliphist\.copy(entry);' "$f")" = "1" ] || exit 1
     done
 
-    # ── Shell restart (see shellRestart above).
-    substituteInPlace $out/.config/hypr/hyprland/keybinds.lua \
-      --replace-fail \
-        'hl.dsp.exec_cmd("killall ydotool qs quickshell; qs -c $qsConfig &")' \
-        'hl.dsp.exec_cmd("${shellRestart}")'
-
+${restart.patch}
     # ── Bluetooth pairing agent.
     #
     # ../modules/bluetooth.nix enables blueman, but its applet is a D-Bus/
@@ -1677,12 +1628,6 @@ IIANIM
                 requester.message.rawContent += stallNote;
                 requester.message.content += stallNote;
             }'
-    done
-
-    # The About page restarts the shell the same broken way.
-    for f in $out/.config/quickshell/*/modules/ii/settings/pages/About.qml; do
-      [ -e "$f" ] || continue
-      sed -i 's|killall qs 2>/dev/null \|\| true|qs kill 2>/dev/null \|\| pkill -f '"'"'quickshell -c'"'"' 2>/dev/null \|\| true|' "$f"
     done
 
     # ── The config root rewrite. Must be last: it rewrites the line added above
