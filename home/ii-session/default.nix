@@ -57,6 +57,8 @@
   kde = import ./kde.nix args;
   inherit (kde) plasmaTools kcmHosts;
   capture = import ./capture.nix args;
+  display = import ./display-power.nix args;
+  inherit (display) displayPower;
 
   # ── quickshell itself: the `qs` binary both configs run under.
   #
@@ -452,112 +454,6 @@
   # is now stale and read by nobody.
   zenAccent = import ../zen-wallpaper-accent.nix { inherit pkgs; };
   zenAccentColors = "${config.home.homeDirectory}/.local/state/quickshell/user/generated/colors.json";
-
-  # ── Idle and lid: the display is the only thing that ever turns off.
-  #
-  # The machine never sleeps on its own any more — logind ignores the lid and
-  # both power keys (../modules/power.nix), and the one thing left that could
-  # still end a session unattended is UPower's poweroff at 12%, same file.
-  # What remains here is purely about the screen:
-  #
-  #   on AC       nothing, ever: no screen-off, no lock
-  #   on battery  screen off after 5 min idle, lock at 15 min
-  #   lid closed  the internal panel goes dark, nothing else changes
-  #
-  # hypridle has no notion of power source, so every listener goes through
-  # this script and the AC check happens at the moment the timeout fires.
-  # Called by name from hypridle.conf rather than by store path: that file is
-  # seed-once (see mutablePaths) and outlives any store path baked into it.
-  #
-  # Two Hyprland behaviours, both verified on this machine, shape the lid half:
-  #
-  # A dpms dispatch naming an output that is not active does not fail — it
-  # falls through to EVERY monitor. With eDP-1 switched off in nwg-displays,
-  # a lid close would have blacked out the HDMI screen. So the panel is only
-  # ever named after `hyprctl monitors` (which lists active outputs only) has
-  # confirmed it is there.
-  #
-  # And key_press/mouse_move_enables_dpms wake a per-monitor dpms-off just as
-  # they wake a global one: with the lid shut, the first touch of an external
-  # mouse lit the closed panel again. Those two are turned off for as long as
-  # the lid is closed, and `wake` (hypridle's on-resume) takes over waking the
-  # other screens without touching the panel.
-  displayPower = pkgs.writeShellScriptBin "ii-display-power" ''
-    export PATH=${lib.makeBinPath [ pkgs.hyprland pkgs.jq pkgs.coreutils pkgs.gnugrep pkgs.systemd ]}
-
-    on_battery() { [ "$(cat /sys/class/power_supply/AC/online 2>/dev/null)" = 0 ]; }
-    lid_closed() { grep -qs closed /proc/acpi/button/lid/*/state; }
-    panel() { hyprctl monitors -j | jq -r 'first(.[] | select(.name | startswith("eDP")) | .name) // empty'; }
-    dpms() { hyprctl dispatch "hl.dsp.dpms({ action = \"$1\"''${2:+, monitor = \"$2\"} })" >/dev/null; }
-    wake_on_input() {
-      hyprctl dispatch "function() hl.config({ misc = { mouse_move_enables_dpms = $1, key_press_enables_dpms = $1 } }) end" >/dev/null
-    }
-
-    case "''${1:-}" in
-      lid-close)
-        wake_on_input false
-        p=$(panel)
-        if [ -n "$p" ]; then dpms disable "$p"; fi
-        ;;
-      lid-open)
-        wake_on_input true
-        p=$(panel)
-        if [ -n "$p" ]; then dpms enable "$p"; fi
-        ;;
-      idle-off)
-        if on_battery; then dpms disable; fi
-        ;;
-      idle-lock)
-        if on_battery; then loginctl lock-session; fi
-        ;;
-      wake)
-        # Per monitor, and only the ones that are actually off, so a resume
-        # on AC (where idle-off did nothing) touches no screen at all.
-        skip=
-        if lid_closed; then skip=$(panel); fi
-        hyprctl monitors -j | jq -r '.[] | select(.dpmsStatus | not) | .name' |
-        while read -r m; do
-          if [ "$m" != "$skip" ]; then dpms enable "$m"; fi
-        done
-        ;;
-      *)
-        echo "usage: ii-display-power lid-close|lid-open|idle-off|idle-lock|wake" >&2
-        exit 2
-        ;;
-    esac
-    exit 0
-  '';
-
-  # Replaces upstream's hypridle.conf outright: its three listeners (lock 5m,
-  # screen off 10m, suspend 15m) all fire regardless of power source, and the
-  # suspend one is exactly what this setup is removing. general {} is
-  # upstream's, verbatim — manual suspend (SUPER+SHIFT+L) still locks first.
-  #
-  # Seed-once like the rest of mutablePaths: an existing
-  # ~/.config-ii/hypr/hypridle.conf is not replaced. Delete it to pick this up.
-  hypridleConf = pkgs.writeText "hypridle.conf" ''
-    $lock_cmd = hyprctl dispatch 'hl.dsp.global("quickshell:lock")' & pidof qs quickshell hyprlock || hyprlock
-    $suspend_cmd = systemctl suspend || loginctl suspend
-
-    general {
-        lock_cmd = $lock_cmd
-        before_sleep_cmd = loginctl lock-session
-        after_sleep_cmd = hyprctl dispatch 'hl.dsp.global("quickshell:lockFocus")'
-        inhibit_sleep = 3
-    }
-
-    # Battery only; both are no-ops on AC (see ii-display-power).
-    listener {
-        timeout = 300 # 5mins
-        on-timeout = ii-display-power idle-off
-        on-resume = ii-display-power wake
-    }
-
-    listener {
-        timeout = 900 # 15mins
-        on-timeout = ii-display-power idle-lock
-    }
-  '';
 
   # ── Video wallpapers.
   #
@@ -1486,29 +1382,7 @@ ${kde.patch}
     [ "$(grep -c '"SUPER + W"' $out/.config/hypr/hyprland/keybinds.lua)" = "0" ] || exit 1
 
 ${capture.patch}
-    # ── Lid and idle (see displayPower above).
-    #
-    # Upstream ships the lid bind commented out, as a suspend. It becomes the
-    # panel-off/on pair instead; locked so it still fires on the lock screen.
-    sed -i 's|^-- hl.bind("switch:on:Lid Switch", .*$|hl.bind("switch:on:Lid Switch", hl.dsp.exec_cmd("${displayPower}/bin/ii-display-power lid-close"), { locked = true }) -- # [hidden]\nhl.bind("switch:off:Lid Switch", hl.dsp.exec_cmd("${displayPower}/bin/ii-display-power lid-open"), { locked = true }) -- # [hidden]|' \
-      $out/.config/hypr/hyprland/keybinds.lua
-    grep -q '^hl.bind("switch:off:Lid Switch"' $out/.config/hypr/hyprland/keybinds.lua
-
-    cp ${hypridleConf} $out/.config/hypr/hypridle.conf
-
-    # The shell's own battery suspend (18% in this config.json) would put the
-    # machine to sleep before it ever reached UPower's 12% poweroff, and a
-    # suspended machine checks nothing — it would drain to zero asleep. Its
-    # low/critical notifications are kept; only the suspend goes. As with the
-    # capture paths, this is the QML default: an existing config.json that
-    # already says true still wins.
-    substituteInPlace $out/.config/quickshell/${qsConfig}/modules/common/Config.qml \
-      --replace-fail 'property bool automaticSuspend: true' 'property bool automaticSuspend: false'
-    for f in $out/.config/quickshell/ii/modules/common/Config.qml; do
-      [ -e "$f" ] || continue
-      sed -i 's|property bool automaticSuspend: true|property bool automaticSuspend: false|' "$f"
-    done
-
+${display.patch}
     # ── Light/dark follows the wallpaper (see autoLightDark above).
     #
     # Applied to both shells: each carries its own copy of switchwall.sh.
