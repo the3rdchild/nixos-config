@@ -23,7 +23,7 @@
 #   gtk per hyprland-portals.conf), and it maps the same
 #   org.gnome.desktop.interface color-scheme key that switchwall.sh's
 #   pre_process() writes on every wallpaper change (see the dconf patch in
-#   ./ii-session.nix). Verified by watching SettingChanged: flipping the mode
+#   ./ii-session/light-dark.nix). Verified by watching SettingChanged: flipping the mode
 #   emits
 #   org.freedesktop.appearance/color-scheme = 1 for dark, 2 for light.
 #
@@ -34,7 +34,7 @@
 #   home-manager writes settings.json as a symlink into the store. VS Code
 #   then cannot save ANY setting from its own UI, and this file is almost
 #   entirely settings that were set that way. Same reasoning as the
-#   seed-once mutablePaths in ./ii-session.nix: the app owns the file.
+#   seed-once mutablePaths in ./ii-session/default.nix: the app owns the file.
 #
 #   Which rules out a jq-style rewrite too — settings.json here is JSONC and
 #   carries comments (the ntfs-3g/FUSE watcher exclusions), and every
@@ -45,7 +45,7 @@ let
   themeSettings = import ./vscode-theme-settings.nix { inherit pkgs; };
 
   # Both config roots: ~/.config for session A and ~/.config-ii for the ii
-  # session (./ii-session.nix). One watcher serves both because the dconf
+  # session (./ii-session). One watcher serves both because the dconf
   # database is shared between them.
   themeSync = pkgs.writeShellScript "vscode-theme-sync" ''
     export PATH="${pkgs.dconf}/bin:$PATH"

@@ -39,7 +39,7 @@ let
   # That is a project of its own, not a flag flip.
   # ── QML modules quickshell doesn't carry.
   #
-  # quickshell-wrapped 0.3.1, built in ../home/ii-session.nix from the
+  # quickshell-wrapped 0.3.1, built in ../home/ii-session/packages.nix from the
   # quickshell input ../flake.nix pins directly. Its wrapper only puts
   # qtdeclarative, qtwayland and qtimageformats on the QML import path, and
   # these dots import five modules beyond that — `import org.kde.kirigami`,
@@ -100,7 +100,7 @@ let
   # plugin path. plasma-nm and bluedevil ship the first two; kcm_users.so
   # ships only inside plasma-workspace, so that button did nothing. Adding the
   # directory takes kcmshell6 --list from 8 modules to 26 — verified — and
-  # costs no new store paths, since ../home/ii-session.nix's plasmaTools
+  # costs no new store paths, since ../home/ii-session/kde.nix's plasmaTools
   # explains why plasma-workspace is already in the system closure.
   #
   # Safe to put on this variable specifically because of what it does NOT
@@ -206,7 +206,7 @@ in
   # google-fonts covers three of the four families the QML names — Readex Pro
   # ("reading"), Space Grotesk ("expressive") and Caveat. material-symbols is
   # the icon font. rubik stands in for Google Sans Flex, which is Google's
-  # brand font and packaged nowhere; ../home/ii-session.nix patches the QML to
+  # brand font and packaged nowhere; ../home/ii-session/dots.nix patches the QML to
   # ask for it. JetBrainsMono NF is already in ./fonts.nix.
   fonts.packages = with pkgs; [
     google-fonts
@@ -220,7 +220,7 @@ in
   services.gnome.gnome-keyring.enable = true;
 
   # The geoclue demo agent, which start_geoclue_agent.sh launches (patched to
-  # the store path in ../home/ii-session.nix). The geoclue2 *service* is
+  # the store path in ../home/ii-session/dots.nix). The geoclue2 *service* is
   # already on from ./hyprland-desktop.nix; this is only the agent half.
   environment.systemPackages = [ pkgs.geoclue2-with-demo-agent ];
 }

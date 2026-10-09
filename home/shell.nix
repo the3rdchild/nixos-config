@@ -54,7 +54,7 @@
     #
     # Scope worth knowing: this configures ~/.config/fish, which the
     # illogical-impulse session does NOT read — it ships its own config.fish
-    # under the alternate config root (see ./ii-session.nix). So this is the
+    # under the alternate config root (see ./ii-session). So this is the
     # fish you get on a TTY, over SSH, or anywhere XDG_CONFIG_HOME is unset,
     # and the two are deliberately kept saying the same things.
     interactiveShellInit = ''

@@ -4,7 +4,7 @@
 #   This module manages ONLY the GTK (gtk-theme), icon-theme, and cursor-theme
 #   for the user session. Everything the shell draws — the bar, launcher,
 #   notifications, foot, btop — is coloured from the current wallpaper by the
-#   session's own matugen pipeline (see ./ii-session.nix) and must not be
+#   session's own matugen pipeline (see ./ii-session) and must not be
 #   pinned here.
 #
 #   All three keys land in dconf, which is the one place both this module and
@@ -139,7 +139,7 @@ let
   #
   #   That session is gone and its successor gets this right: switchwall.sh's
   #   pre_process() writes gtk-theme and color-scheme as a matching pair (see
-  #   the dconf patch in ./ii-session.nix). This watcher is kept anyway —
+  #   the dconf patch in ./ii-session/light-dark.nix). This watcher is kept anyway —
   #   ./theme-switch and any hand-run `dconf write` still set color-scheme on
   #   its own, and this is what keeps gtk-theme from being left behind.
   #

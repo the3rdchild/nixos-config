@@ -37,7 +37,7 @@
     # ── illogical-impulse (end-4) + the end4-pC fork, for the second session.
     #
     # Two halves again, and neither has a flake: both are plain config trees
-    # that ../home/ii-session.nix patches into a single derivation. They only
+    # that ../home/ii-session/dots.nix patches into a single derivation. They only
     # ever feed session B ("Hyprland (illogical-impulse)"), which since the
     # caelestia session was dropped is the only session there is.
     #
@@ -76,7 +76,7 @@
     # Not in nixpkgs, and not upstream's MicroTeX either: both shells run
     # `cd <dir> && ./LaTeX -headless`, and the `LaTeX` binary with that CLI is
     # end-4's fork (NanoMichael's tree has no -headless sample). ../home/
-    # ii-session.nix builds it and rewrites the hardcoded /opt/MicroTeX in
+    # ii-session/microtex.nix builds it and rewrites the hardcoded /opt/MicroTeX in
     # LatexRenderer.qml to the store path; without it every $$...$$ in an AI
     # reply renders as nothing at all, silently.
     #

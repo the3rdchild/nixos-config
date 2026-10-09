@@ -7,7 +7,7 @@
   # List of packages to install for the user.
   #
   # Session-specific packages do NOT belong here: everything the illogical-
-  # impulse session reaches by name lives in ./ii-session.nix, next to the
+  # impulse session reaches by name lives in ./ii-session/packages.nix, next to the
   # dots that call it. The split is deliberate — a package moved out of that
   # file breaks a keybind or a panel, while one moved out of this file only
   # takes a convenience away from a shell prompt.
@@ -25,14 +25,14 @@
     # These are the half of ../home/caelestia.nix's package list that was
     # never caelestia-specific: general desktop programs that happened to be
     # declared next to the dots that shipped its config. Nothing in
-    # ./ii-session.nix calls any of them by name, which is exactly why they
+    # ./ii-session calls any of them by name, which is exactly why they
     # are here and not there.
     foot # fallback terminal; kitty (../modules/package.nix) is the SUPER+T default
     btop
     fastfetch
     micro
     hyprpicker # colour picker, handy from any session
-    pavucontrol # GTK mixer; pwvucontrol (./ii-session.nix) is the bound one
+    pavucontrol # GTK mixer; pwvucontrol (./ii-session/keybinds.nix) is the bound one
     trash-cli
     gammastep # night light, by hand — hyprsunset is what the shell drives
     bluez # mpris-proxy, forwards Bluetooth media keys to MPRIS

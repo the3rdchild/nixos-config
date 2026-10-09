@@ -1,6 +1,6 @@
 { pkgs }:
 #
-# Extracted from ./vscode.nix so ./ii-session.nix can run the same script
+# Extracted from ./vscode.nix so ./ii-session can run the same script
 # against the second session's config root. One implementation, two callers —
 # the script picks its target from XDG_CONFIG_HOME at run time, so pointing it
 # at ~/.config-ii is all session B needs.
@@ -45,7 +45,7 @@ pkgs.writers.writePython3Bin "vscode-theme-settings" {
       # dconf opens $XDG_CONFIG_HOME/dconf/user, and XDG_CONFIG_HOME here is
       # the VS Code root being edited. Drop it so the read always hits the
       # one shared database in ~/.config (see sharedFromConfigHome in
-      # ./ii-session.nix).
+      # ./ii-session/default.nix).
       env = {k: v for k, v in os.environ.items() if k != "XDG_CONFIG_HOME"}
       try:
           value = subprocess.run(

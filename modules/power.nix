@@ -14,7 +14,7 @@
   services.upower.enable = true;
 
   # Power off at 12%. Nothing else on this machine suspends or powers down on
-  # its own (see the logind block below and ../home/ii-session.nix), so this
+  # its own (see the logind block below and ../home/ii-session/display-power.nix), so this
   # is the one backstop against running the battery flat. System-level on
   # purpose: it still fires from the greeter, or with the shell crashed.
   #
@@ -53,7 +53,7 @@
   # The policy is: the machine never sleeps unless asked to. Only the screen
   # turns off — on lid close, and after idle on battery — and that half lives
   # in the ii session's Hyprland lid bind and hypridle.conf, both in
-  # ../home/ii-session.nix (displayPower). logind's own IdleAction stays
+  # ../home/ii-session/display-power.nix. logind's own IdleAction stays
   # "ignore" so nothing sleeps underneath that either.
   #
   # NOTE: this is the settings.Login form, not the older per-key options
@@ -85,7 +85,7 @@
     # has worn to 64.7% of design (33.99 Wh of 52.51), and a lid-shut machine
     # in a bag now stays up until the screen-off/lock timers and, ultimately,
     # UPower's 12% poweroff above. The panel itself still goes dark: that is
-    # the Hyprland lid bind in ../home/ii-session.nix, not logind.
+    # the Hyprland lid bind in ../home/ii-session/display-power.nix, not logind.
     HandleLidSwitch = "ignore";
     HandleLidSwitchExternalPower = "ignore";
     HandleLidSwitchDocked = "ignore";

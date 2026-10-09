@@ -5,7 +5,7 @@
 # Zen already follows the session's light/dark on its own: it is Firefox, it
 # reads org.freedesktop.appearance color-scheme from the portal, and
 # xdg-desktop-portal-gtk serves that from the same
-# org.gnome.desktop.interface color-scheme key ../home/ii-session.nix's
+# org.gnome.desktop.interface color-scheme key ../home/ii-session/light-dark.nix's
 # switchwall patch writes. Nothing here touches light/dark — the one thing
 # that breaks it is a static theme pinned in about:addons, which is a profile
 # setting rather than anything Nix can assert.
@@ -52,7 +52,7 @@ pkgs.writeShellScriptBin "ii-zen-accent" ''
     pkgs.systemd
   ]}:/run/current-system/sw/bin
 
-  # Overridable, because the unit in ../home/ii-session.nix has to name
+  # Overridable, because the unit in ../home/ii-session/default.nix has to name
   # session B's palette explicitly: it runs under systemd --user, which is
   # session A's environment, so $XDG_CONFIG_HOME here is ~/.config and not
   # ~/.config-ii.

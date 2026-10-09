@@ -35,7 +35,7 @@ in
   #
   # The palette itself is written next to this file by ii-zen-accent (see
   # ./zen-wallpaper-accent.nix for why CSS and not the zen.theme.accent-color
-  # pref, and ./ii-session.nix for what runs it). This half is the mapping,
+  # pref, and ./ii-session/default.nix for what runs it). This half is the mapping,
   # and it is static: which Zen variables the accent lands on does not depend
   # on the wallpaper, so it belongs in the store rather than in a file some
   # script rewrites.

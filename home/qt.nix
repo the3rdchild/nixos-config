@@ -3,7 +3,7 @@
 # SCOPE
 #   Everything Qt in the session: Dolphin, qdirstat, OBS, flashprint. GTK is
 #   NOT touched — the session's own matugen pipeline owns that side
-#   (adw-gtk3 / adw-gtk3-dark plus a generated gtk.css, see ./ii-session.nix)
+#   (adw-gtk3 / adw-gtk3-dark plus a generated gtk.css, see ./ii-session)
 #   and ./themes.nix owns the gtk/icon/cursor dconf triplet.
 #
 # WHY THIS EXISTS AT ALL
@@ -36,7 +36,7 @@
 #   switchwall.sh's pre_process() writes
 #   /org/gnome/desktop/interface/color-scheme as prefer-dark / prefer-light on
 #   every wallpaper change, next to gtk-theme (see the dconf patch in
-#   ./ii-session.nix). That dconf key is the only
+#   ./ii-session/light-dark.nix). That dconf key is the only
 #   session-wide dark/light truth here, and it is already what GTK follows —
 #   which is exactly why the icon theme is mirrored from it rather than pinned
 #   to Breeze's own: Dolphin and the GTK apps then draw the same icons.
@@ -72,7 +72,7 @@ let
     # color-scheme and 'Adwaita' for icon-theme — which looks like a working
     # read and is always light. dconf talks to the same database everything
     # else on this machine writes the key with, and needs no GIO plumbing —
-    # including switchwall.sh, patched to `dconf write` in ./ii-session.nix
+    # including switchwall.sh, patched to `dconf write` in ./ii-session/light-dark.nix
     # for exactly this reason.
     DCONF = "${pkgs.dconf}/bin/dconf"
     IFACE = "/org/gnome/desktop/interface/"
