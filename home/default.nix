@@ -8,7 +8,7 @@
     ./kitty.nix
     ./mime.nix
     ./zen.nix
-    ./ii-session.nix
+    ./ii-session
     ./themes.nix
     ./qt.nix
     ./vscode.nix

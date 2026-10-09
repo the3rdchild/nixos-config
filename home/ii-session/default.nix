@@ -678,7 +678,7 @@ ACTIVATE
   # nothing else writes it. It was chosen when caelestia still existed and
   # wrote its own palette to ~/.local/state/caelestia/scheme.json; that file
   # is now stale and read by nobody.
-  zenAccent = import ./zen-wallpaper-accent.nix { inherit pkgs; };
+  zenAccent = import ../zen-wallpaper-accent.nix { inherit pkgs; };
   zenAccentColors = "${config.home.homeDirectory}/.local/state/quickshell/user/generated/colors.json";
 
   # ── Idle and lid: the display is the only thing that ever turns off.
@@ -2630,7 +2630,7 @@ in {
   # wallpaper.
   home.activation.iiVscodeTheme = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
     XDG_CONFIG_HOME="${cfgDir}" run ${
-      import ./vscode-theme-settings.nix { inherit pkgs; }
+      import ../vscode-theme-settings.nix { inherit pkgs; }
     }/bin/vscode-theme-settings
   '';
 
