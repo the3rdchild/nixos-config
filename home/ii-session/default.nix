@@ -1,3 +1,32 @@
+# ── The session: illogical-impulse + the end4-pC fork.
+#
+# This directory owns a config root of its own, and the session is launched
+# with XDG_CONFIG_HOME pointed at it:
+#
+#   ~/.config/      home-manager's own output, for shells and apps started
+#                   outside the session (see ../shell.nix)
+#   ~/.config-ii/   illogical-impulse  (everything here)
+#
+# The split is what makes the whole tree a store symlink with a small,
+# listed set of mutable exceptions (see mutablePaths), rather than
+# home-manager and the dots fighting over one ~/.config.
+#
+# It is cheap because the shell half of these dots is already XDG-aware —
+# 33 sites across ii and end4-pC read ${XDG_CONFIG_HOME:-$HOME/.config}
+# rather than hardcoding. Everything else that matters (fish, kitty, foot,
+# fontconfig, kdeglobals, Kvantum, matugen, fuzzel, wlogout, mpv, dconf)
+# honours XDG_CONFIG_HOME on its own, so nothing here has to be told twice
+# where its config lives. What is NOT XDG-aware is the Hyprland Lua config
+# and a dozen helper scripts, which spell $HOME/.config literally; ./dots.nix
+# rewrites those.
+#
+# Layout:
+#
+#   dots.nix        the patched tree: upstream + end4-pC, made to run on NixOS
+#   <feature>.nix   one change each — its scripts, its QML and its patch
+#   files/          the scripts and QML snippets, as the store gets them
+#                   (@name@ placeholders are filled in by `fill` below)
+#   packages.nix    everything the session reaches for by name
 {
   config,
   inputs,
@@ -5,32 +34,6 @@
   lib,
   ...
 }: let
-  # ── The session: illogical-impulse + the end4-pC fork.
-  #
-  # This file owns a config root of its own, and the session is launched with
-  # XDG_CONFIG_HOME pointed at it:
-  #
-  #   ~/.config/      home-manager's own output, for shells and apps started
-  #                   outside the session (see ../home/shell.nix)
-  #   ~/.config-ii/   illogical-impulse  (everything below)
-  #
-  # The split was built so this session could sit beside caelestia without
-  # either touching the other's files. Caelestia has since been dropped and
-  # this is the only session left, but the split is kept: it is what makes the
-  # whole tree a store symlink with a small, listed set of mutable exceptions
-  # (see mutablePaths), rather than home-manager and the dots fighting over
-  # one ~/.config.
-  #
-  # That split is cheap because the shell half of these dots is already
-  # XDG-aware — 33 sites across ii and end4-pC read
-  # ${XDG_CONFIG_HOME:-$HOME/.config} rather than hardcoding. Everything else
-  # that matters (fish, kitty, foot, fontconfig, kdeglobals, Kvantum, matugen,
-  # fuzzel, wlogout, mpv, dconf) honours XDG_CONFIG_HOME on its own, so
-  # nothing here has to be told twice where its config lives.
-  #
-  # What is NOT XDG-aware is the Hyprland Lua config and a dozen helper
-  # scripts, which spell $HOME/.config literally. Those are rewritten in the
-  # `dots` derivation below.
   cfgDirName = ".config-ii";
   cfgDir = "${config.home.homeDirectory}/${cfgDirName}";
 
@@ -50,74 +53,21 @@
 
   args = { inherit config inputs pkgs lib qsConfig fill; };
 
+  # ── The features, in the order their patches are applied.
   python = import ./python.nix args;
-  inherit (python) venv;
   terminals = import ./terminals.nix args;
   microtex = import ./microtex.nix args;
   kde = import ./kde.nix args;
-  inherit (kde) plasmaTools kcmHosts;
+  keybinds = import ./keybinds.nix args;
   capture = import ./capture.nix args;
   display = import ./display-power.nix args;
-  inherit (display) displayPower;
-  keybinds = import ./keybinds.nix args;
-  inherit (keybinds) volumeControlToggle;
-  restart = import ./shell-restart.nix args;
-  clipboard = import ./clipboard.nix args;
-  ai = import ./ai.nix args;
+  lightDark = import ./light-dark.nix (args // { inherit (video) videoFrame; });
   video = import ./video-wallpaper.nix args;
-  inherit (video) videoFrame videoProxy;
   barIslands = import ./bar-islands.nix args;
-  lightDark = import ./light-dark.nix (args // { inherit videoFrame; });
-  inherit (lightDark) autoLightDarkCtl;
+  clipboard = import ./clipboard.nix args;
+  restart = import ./shell-restart.nix args;
+  ai = import ./ai.nix args;
 
-  # ── quickshell itself: the `qs` binary both configs run under.
-  #
-  # This used to live in ../home/caelestia.nix, reached through
-  # inputs.caelestia-shell.inputs.quickshell — session B was running session
-  # A's quickshell the whole time, which is why dropping that session started
-  # with moving this. ../flake.nix now takes the same rev as a direct input,
-  # so the store path is byte-identical to what was running before the move.
-  #
-  # The two overrides are upstream quickshell's own optional backends, off for
-  # the same reason caelestia turned them off: X11 and i3/sway support compile
-  # in Xlib and a sway IPC client that a Wayland-only Hyprland session never
-  # calls. Keeping them would only widen the closure.
-  #
-  # withModules adds QML modules to the wrapper's import path. Only
-  # qtimageformats here — the m3shapes module that used to be in this list is
-  # caelestia's bar-workspace shape library, and these dots do not import it:
-  # modules/common/widgets/MaterialShape.qml reads its own
-  # `shapes/material-shapes.js`, the rounded-polygon-qmljs submodule the build
-  # already asserts is present.
-  #
-  # The other five QML modules these dots need are not here but in
-  # ../modules/ii-session.nix, exported as NIXPKGS_QT6_QML_IMPORT_PATH — see
-  # the comment there for why the session variable rather than a second
-  # wrapper.
-  quickshell =
-    (inputs.quickshell.packages.${pkgs.stdenv.hostPlatform.system}.default.override {
-      withX11 = false;
-      withI3 = false;
-    }).withModules [ pkgs.qt6.qtimageformats ];
-
-  # ── Zen's accent, from this session's palette.
-  #
-  # ../home/zen-wallpaper-accent.nix carries the whole explanation of why Zen
-  # needs a CSS file pushed into its profile rather than a pref, and
-  # ../home/zen.nix owns the userChrome.css that consumes it. Only two things
-  # are session B's business: which colours.json is the source, and what runs
-  # the script — both below.
-  #
-  # Session B only, which falls out of the source path on its own: this is
-  # matugen's m3colors output as ~/.config-ii/matugen/config.toml routes it,
-  # nothing else writes it. It was chosen when caelestia still existed and
-  # wrote its own palette to ~/.local/state/caelestia/scheme.json; that file
-  # is now stale and read by nobody.
-  zenAccent = import ../zen-wallpaper-accent.nix { inherit pkgs; };
-  zenAccentColors = "${config.home.homeDirectory}/.local/state/quickshell/user/generated/colors.json";
-
-  # ── The merged, patched config tree: ./dots.nix, with each feature's
-  # patch applied in this order.
   dots = import ./dots.nix (args // {
     inherit cfgDirName;
     patches = map (f: f.patch) [
@@ -137,6 +87,17 @@
     ];
   });
 
+  # ── Zen's accent, from this session's palette.
+  #
+  # ../zen-wallpaper-accent.nix carries the whole explanation of why Zen
+  # needs a CSS file pushed into its profile rather than a pref, and
+  # ../zen.nix owns the userChrome.css that consumes it. Only two things are
+  # this session's business: which colours.json is the source, and what runs
+  # the script — both below. The source is matugen's m3colors output as
+  # ~/.config-ii/matugen/config.toml routes it; nothing else writes it.
+  zenAccent = import ../zen-wallpaper-accent.nix { inherit pkgs; };
+  zenAccentColors = "${config.home.homeDirectory}/.local/state/quickshell/user/generated/colors.json";
+
   # ── Files these dots write to at runtime.
   #
   # home-manager's recursive source makes real directories but symlinks every
@@ -147,8 +108,8 @@
   # Seeded once, then yours: a rebuild will not overwrite one that exists. That
   # is upstream's own model for the custom/ folder, and without it the Settings
   # panel would be decorative — every nixos-rebuild would revert it. The price
-  # is that these eleven paths are not reproducible from the flake; delete one
-  # to have it seeded again.
+  # is that these paths are not reproducible from the flake; delete one to
+  # have it seeded again.
   #
   #   hypr/custom/                  6 files created at startup by
   #                                 hyprland/services/create_custom_config.lua
@@ -160,6 +121,7 @@
   #                                 regenerates it whenever a matugen template
   #                                 is toggled in Settings
   #   the five matugen outputs      rewritten on every wallpaper change
+  #
   # Second group: application configs that the applications themselves rewrite.
   # These are not shell state — they are ordinary app config files that happen
   # to be shipped by these dots, and every one of them belongs to a program
@@ -227,7 +189,7 @@ in {
   # read-only, and then nothing can create hypr/custom/*.lua or
   # illogical-impulse/config.json at runtime. recursive makes real directories
   # and symlinks the files individually.
-
+  #
   # ── Tooling this session has to share with the rest of the user.
   #
   # The session reads ~/.config-ii, so everything home-manager writes into
@@ -241,14 +203,15 @@ in {
   #                  stale unmanaged ~/.gitconfig whose key is misspelled
   #                  `user.mail`, so git sees no address and refuses to commit
   #                  at all ("Author identity unknown"). It also drops
-  #                  ../home/git.nix's url."git@github.com:".insteadOf, which
-  #                  is the only reason pushes to an https remote go over SSH.
+  #                  ../git.nix's url."git@github.com:".insteadOf, which is
+  #                  the only reason pushes to an https remote go over SSH.
   #   mimeapps.list  default application for every file type
-  #   menus          menus/applications.menu, from ../home/mime.nix
-  #   dconf          light/dark mode and the GTK theme, for BOTH sessions
+  #   menus          menus/applications.menu, from ../mime.nix
+  #   dconf          light/dark mode and the GTK theme, inside and outside
+  #                  the session alike
   #
-  # dconf is the one that actually broke something visible. Session B started
-  # with no ~/.config-ii/dconf/user at all, so `gsettings get
+  # dconf is the one that actually broke something visible. The session
+  # started with no ~/.config-ii/dconf/user at all, so `gsettings get
   # org.gnome.desktop.interface color-scheme` answered 'default', the portal
   # reported color-scheme = 0 ("no preference") to every client, and all GTK
   # and Qt apps rendered light while the shell stayed on its last matugen
@@ -262,18 +225,17 @@ in {
   # ends up bound to depends on whether it was activated before or after that
   # line ran. With one database the race stops mattering.
   #
-  # The deliberate consequence: light/dark and the GTK theme are now one
-  # setting for the whole user. Changing the wallpaper in ii retints session A
-  # as well — ../home/qt.nix and ../home/themes.nix watch these very keys and
-  # will follow. That is what was asked for, and it is the honest model
+  # The deliberate consequence: light/dark and the GTK theme are one setting
+  # for the whole user — ../qt.nix and ../themes.nix watch these very keys
+  # and follow. That is what was asked for, and it is the honest model
   # anyway: light/dark is a property of the person, not of the dotfiles.
   #
   # mkOutOfStoreSymlink rather than copying the same source into both trees:
-  # this points at the live ~/.config path, so whatever home-manager generates
-  # for session A is what session B reads, with no second definition that can
-  # drift. Nothing writes to any of the three — in session A they are already
-  # read-only store symlinks — so the indirection costs nothing.
-
+  # this points at the live ~/.config path, so whatever home-manager
+  # generates there is what this session reads, with no second definition
+  # that can drift. Nothing writes to any of them through ~/.config — they
+  # are read-only store symlinks there already — so the indirection costs
+  # nothing.
   home.file =
     {
       ${cfgDirName} = {
@@ -290,18 +252,17 @@ in {
 
   # ── VS Code follows the session's light/dark inside this config root too.
   #
-  # ../home/vscode.nix already solves this for session A: vscode-theme-settings
+  # ../vscode.nix already solves this for ~/.config: vscode-theme-settings
   # writes the theme matching dconf's color-scheme into Code/User/settings.json
   # (and its vscode-theme-sync watcher redoes it live, for this root too),
-  # editing the JSONC in place rather than
-  # replacing it, because VS Code rewrites that file itself and a store symlink
-  # would make it drop every setting written that way.
+  # editing the JSONC in place rather than replacing it, because VS Code
+  # rewrites that file itself and a store symlink would make it drop every
+  # setting written that way.
   #
   # It reads its target from XDG_CONFIG_HOME at run time, so the same binary
-  # serves both roots — hence the extraction into
-  # ../home/vscode-theme-settings.nix. Without this, VS Code in session B keeps
-  # whatever theme it was last on while everything else on screen follows the
-  # wallpaper.
+  # serves both roots — hence ../vscode-theme-settings.nix. Without this,
+  # VS Code in the session keeps whatever theme it was last on while
+  # everything else on screen follows the wallpaper.
   home.activation.iiVscodeTheme = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
     XDG_CONFIG_HOME="${cfgDir}" run ${
       import ../vscode-theme-settings.nix { inherit pkgs; }
@@ -327,16 +288,16 @@ in {
   # more places than a wallpaper change (a bare regenerate, --noswitch, the
   # shell re-applying after a restart), and watching the output file catches
   # all of them without having to find each caller; and it keeps one more
-  # substituteInPlace out of the `dots` derivation, where every anchor is a
-  # thing upstream can rename.
+  # substituteInPlace out of the dots build, where every anchor is a thing
+  # upstream can rename.
   #
   # PathChanged, not PathModified: matugen writes the file and closes it, and
   # PathChanged fires on that close rather than on each intermediate write —
   # so the script never reads a half-written colours.json.
   #
-  # default.target, not graphical-session.target, for the reason ../home/
-  # qt.nix's watcher spells out: the plain "Hyprland" fallback session in the
-  # greeter never reaches graphical-session.target.
+  # default.target, not graphical-session.target, for the reason ../qt.nix's
+  # watcher spells out: the plain "Hyprland" fallback session in the greeter
+  # never reaches graphical-session.target.
   systemd.user.paths.ii-zen-accent = {
     Unit.Description = "Watch this session's matugen palette for Zen's accent";
     Path = {
@@ -350,186 +311,23 @@ in {
     Unit.Description = "Write the wallpaper's accent into Zen's profile";
     Service = {
       Type = "oneshot";
-      # Named explicitly because systemd --user is session A's environment,
-      # and because the script's own default is only right by coincidence —
-      # it happens to be the same path today, and saying so here is what
-      # keeps this unit pointed at session B if that default ever moves.
+      # Named explicitly because systemd --user does not run with this
+      # session's XDG_CONFIG_HOME, and because the script's own default is
+      # only right by coincidence — it happens to be the same path today, and
+      # saying so here is what keeps this unit pointed at this session if
+      # that default ever moves.
       Environment = [ "ZEN_ACCENT_COLORS=${zenAccentColors}" ];
       ExecStart = "${zenAccent}/bin/ii-zen-accent apply";
     };
   };
 
-  # ── Packages.
-  #
-  # Derived from upstream's own nixpkgs mapping, sdata/dist-nix/home-manager/
-  # home.nix, with the non-NixOS half dropped (nixGL, targets.genericLinux and
-  # the PAM/GPU workarounds it needs, none of which apply here).
-  #
-  # This is one profile shared with session A — there is no per-session
-  # home.packages — so anything already installed by ../home/packages.nix or
-  # ../modules/package.nix is deliberately not repeated here.
-  #
-  # One thing is still missing and packaged nowhere: breeze-plus, a Breeze
-  # fork that kde-material-you-colors offers as an option and falls back to
-  # plain breeze without. microtex used to be on this list too and is built
-  # above now; qt6-avif-image-plugin turned out to be kimageformats under
-  # another name and is on QT_PLUGIN_PATH in ../modules/ii-session.nix.
-  home.packages = with pkgs; [
-    # The shell runtime itself. Inherited from the dropped caelestia session,
-    # which is the only reason it was ever somewhere else — see the let block.
-    quickshell # `qs`
-    venv
-    # No microtex here: nothing runs it from PATH. The QML is pointed at its
-    # store path in `dots` above, and that reference is what keeps it alive —
-    # putting it in the profile would only add an ~/.nix-profile/opt/MicroTeX
-    # nobody looks at.
-    autoLightDarkCtl # `ii-lightdark-auto [status|on|off|toggle]`
-    zenAccent # `ii-zen-accent [apply|--restart|auto ...]`, see the unit below
-    plasmaTools # plasma-apply-colorscheme + plasma-changeicons, see above
-
-    # No fonts here on purpose — they are system-wide in
-    # ../modules/ii-session.nix, which installs google-fonts, material-symbols
-    # and rubik. home-manager advertises profile fonts through
-    # ~/.config/fontconfig/conf.d/10-hm-fonts.conf, which lives in the config
-    # root session B does not read, so a font in this list would be invisible
-    # in the one session that wants it.
-
-    # ── Everything below came over from ../home/caelestia.nix when the
-    # caelestia session was dropped. It is here rather than in
-    # ./packages.nix because each one is reached by name from inside these
-    # dots, so losing it breaks a bind or a panel rather than a convenience.
-    fuzzel # SUPER+V clipboard, SUPER+. emoji picker; its theme file is
-           # generated by matugen (see mutablePaths)
-    volumeControlToggle # SUPER+SHIFT+B, see the let block
-    displayPower # `ii-display-power`, called by name from hypridle.conf
-    pwvucontrol # what that toggle actually launches
-    libnotify # notify-send, used from the shells and several scripts
-    cliphist # the clipboard history both Cliphist.qml patches above drive;
-             # execs.lua starts the two watchers, so no systemd unit here
-    wl-clipboard # wl-copy / wl-paste, the other half of every clipboard path
-    gnome-keyring # scripts/keyring/unlock.sh; the PAM and D-Bus halves are
-                  # system-wide in ../modules/ii-session.nix
-    libsecret # secret-tool: KeyringStorage.qml stores and looks up the AI
-              # sidebar's API keys with it (and scripts/keyring/try_lookup.sh).
-              # Without it `/key` saved nothing and every key read came back
-              # empty, with no error shown.
-
-    # Colour pipeline.
-    matugen
-    imagemagick
-    libqalculate
-
-    # The wallpaper picker. switchwall.sh with no path argument opens
-    # `kdialog --getopenfilename` (scripts/colors/switchwall.sh:415), and so
-    # do the sidebar's "choose image" and Settings' profile-preset import
-    # (SidebarRightContent.qml:102, settings/pages/Profile.qml:541). Without
-    # it every one of those is a no-op that leaves the old wallpaper up.
-    kdePackages.kdialog
-
-    # Video wallpapers. switchwall.sh detects a video by extension and then
-    # needs both: mpvpaper to play it as the background layer, ffmpeg to pull
-    # frame one out as the still that matugen reads the palette from
-    # (switchwall.sh:202-239). It also writes hypr/custom/scripts/
-    # __restore_video_wallpaper.sh, which execs.lua runs on every start — so
-    # missing these is not one dead feature but a dead line in the autostart.
-    mpvpaper
-    ffmpeg
-    videoProxy # `ii-video-proxy <video>`: the restore script calls it by name
-               # at every login; also usable by hand, prints the file to play
-
-    # "Open Upscayl" on the wallpaper notification (switchwall.sh:82). With it
-    # absent the action falls through to a prompt offering `yay -S`, which on
-    # this machine is advice for a different operating system.
-    upscayl
-
-    # Widgets and helpers the shell shells out to.
-    wlogout
-    hypridle
-    hyprsunset
-    songrec
-    translate-shell
-    wtype
-    upower
-    ddcutil
-    brightnessctl
-    playerctl
-
-    # cava, NOT libcava. Upstream's own nixpkgs mapping says `libcava #cava`
-    # and that mapping is wrong: libcava is the rendering library and ships
-    # include/ and lib/ with no bin/ at all, while MediaControls.qml runs
-    # `["cava", "-p", <raw_output_config>]` (MediaControls.qml:64) and wants
-    # the executable. The visualizer next to the media controls stayed flat
-    # for exactly this reason.
-    cava
-    lxqt.pavucontrol-qt
-
-    # execs.lua starts `easyeffects --hide-window --service-mode` on every
-    # session, and both shells carry a quick toggle plus an equalizer page
-    # driving it (services/EasyEffects.qml, scripts/eq/equalizer.sh).
-    easyeffects
-
-    # pactl, for the two places that need to name a PulseAudio source: screen
-    # recording WITH sound picks the monitor source (scripts/videos/
-    # record.sh:23) and SongRec listens on it (scripts/musicRecognition/
-    # recognize-music.sh:22-32). PipeWire answers the protocol here — what is
-    # missing is only the client binary, which lives in this package and
-    # nowhere else. Installing it starts no daemon: ../modules/audio.nix sets
-    # services.pulseaudio.enable = false and that is untouched.
-    pulseaudio
-
-    # Screen capture.
-    hyprshot
-    slurp
-    swappy
-    wf-recorder
-    tesseract
-
-    # Basic tools the scripts assume.
-    #
-    # grim and jq are not optional: the Print bind is
-    # `grim -o "$(hyprctl activeworkspace -j | jq -r '.monitor')" - | wl-copy`
-    # (keybinds.lua:95-96) and the OCR fallback shells out to grim too, so
-    # without them the screenshot keys fail silently. gojq below is a
-    # different binary name and does not satisfy `jq`.
-    grim
-    jq
-    bc
-    gojq
-    yq-go
-    rsync
-    eza
-
-    # killall. The shellRestart script above carries psmisc on its own private
-    # PATH, but four call sites reach for it from the session's PATH
-    # instead: ConflictKiller.qml:36,40 (`killall kded6`, `killall mako
-    # dunst`), killDialog.qml:92,103 and scripts/keyring/unlock.sh:18.
-    psmisc
-
-    # `file -b --mime-type`, used to decide how to show an attachment in the
-    # AI chat and what icon a directory entry gets (AttachedFileIndicator.qml
-    # :34, DirectoryIcon.qml:33).
-    file
-
-    # Qt/GTK theming the dots ship configs for.
-    adw-gtk3
-    kdePackages.breeze
-    kdePackages.breeze-icons
-    kdePackages.plasma-nm
-    kdePackages.bluedevil
-
-    # kcmshell6, which is how the panel opens the two KCMs above and the user
-    # one: Config.qml:153-157 spells them `kcmshell6 kcm_bluetooth`,
-    # `kcmshell6 kcm_networkmanagement`, `kcmshell6 kcm_users`. plasma-nm and
-    # bluedevil only supply the modules — this supplies the thing that runs
-    # them, and without it those buttons did nothing at all.
-    #
-    # kcmutils, not kde-cli-tools: the name suggests otherwise and every Arch
-    # guide says otherwise, but in this nixpkgs kde-cli-tools' bin/ holds
-    # kioclient, kstart, kde-open and friends with no kcmshell6 among them.
-    # Checked by listing both.
-    #
-    # kcmutils and systemsettings, wrapped so the two KCMs above can load —
-    # see kcmHosts in the let block.
-    kcmHosts
-  ];
+  home.packages = import ./packages.nix {
+    inherit pkgs inputs zenAccent;
+    inherit (python) venv;
+    inherit (lightDark) autoLightDarkCtl;
+    inherit (kde) plasmaTools kcmHosts;
+    inherit (keybinds) volumeControlToggle;
+    inherit (display) displayPower;
+    inherit (video) videoProxy;
+  };
 }
