@@ -1800,6 +1800,16 @@ ACTIVATE
       $out/.config/hypr/hyprland/keybinds.lua
     grep -q 'quickshell:settingsToggle' $out/.config/hypr/hyprland/keybinds.lua
 
+    # ── SUPER+W is unbound.
+    #
+    # Upstream opens the browser on it; asked to have it removed outright
+    # rather than moved. Checked before and after so an upstream rewording
+    # fails the build instead of leaving the bind silently in place.
+    grep -q '^hl.bind("SUPER + W", hl.dsp.exec_cmd(browser),' $out/.config/hypr/hyprland/keybinds.lua
+    sed -i '/^hl.bind("SUPER + W", hl.dsp.exec_cmd(browser),/d' \
+      $out/.config/hypr/hyprland/keybinds.lua
+    [ "$(grep -c '"SUPER + W"' $out/.config/hypr/hyprland/keybinds.lua)" = "0" ] || exit 1
+
     # ── Capture destinations.
     #
     # end4-pC is the shell that runs by default; ii gets the same treatment
