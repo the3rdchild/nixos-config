@@ -3,7 +3,45 @@
   pkgs,
   lib,
   ...
-}: {
+}: let
+  themeSettings = import ./kitty-theme-settings.nix { inherit pkgs; };
+
+  # dconf, not gsettings — see ../home/qt.nix and ./ii-session/light-dark.nix
+  # for why: gsettings only reaches the real database with GIO_EXTRA_MODULES
+  # pointed at dconf's GIO module, which this watcher's own environment does
+  # not set up.
+  themeSync = pkgs.writeShellScript "kitty-theme-sync" ''
+    export PATH="${pkgs.dconf}/bin:$PATH"
+    iface=/org/gnome/desktop/interface
+
+    ${themeSettings}/bin/kitty-theme-settings
+    dconf watch $iface/ | while read -r line; do
+      [ "$line" = "$iface/color-scheme" ] && ${themeSettings}/bin/kitty-theme-settings
+    done
+
+    # Only reached if `dconf watch` died; fail so systemd restarts it.
+    exit 1
+  '';
+in {
+  home.packages = [ themeSettings ];
+
+  home.activation.kittyTheme = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+    run ${themeSettings}/bin/kitty-theme-settings
+  '';
+
+  systemd.user.services.kitty-theme-sync = {
+    Unit = {
+      Description = "Write kitty's light/dark theme when the session mode changes";
+      After = [ "dconf.service" ];
+    };
+    Service = {
+      ExecStart = "${themeSync}";
+      Restart = "on-failure";
+      RestartSec = 5;
+    };
+    Install.WantedBy = [ "default.target" ];
+  };
+
   programs.kitty = {
     enable = true;
     font = {
@@ -24,70 +62,17 @@
     };
     # Extra configuration can be added directly
     extraConfig = ''
-      foreground #a9b1d6
-      background #1a1b26
-
-      # Black
-      color0 #414868
-      color8 #414868
-
-      # Red
-      color1 #f7768e
-      color9 #f7768e
-
-      # Green
-      color2  #73daca
-      color10 #73daca
-
-      # Yellow
-      color3  #e0af68
-      color11 #e0af68
-
-      # Blue
-      color4  #7aa2f7
-      color12 #7aa2f7
-
-      # Magenta
-      color5  #bb9af7
-      color13 #bb9af7
-
-      # Cyan
-      color6  #7dcfff
-      color14 #7dcfff
-
-      # White
-      color7  #c0caf5
-      color15 #c0caf5
-
-      # Cursor
-      cursor #c0caf5
-      cursor_text_color #1a1b26
-
-      # Selection highlight
-      selection_foreground none
-      selection_background #28344a
-
-      # The color for highlighting URLs on mouse-over
-      url_color #9ece6a
-
-      # Window borders
-      active_border_color #3d59a1
-      inactive_border_color #101014
-      bell_border_color #e0af68
-
-      # Tab bar
+      # Tab bar (not theme colours, so they live here rather than in the
+      # generated include below)
       tab_bar_style fade
       tab_fade 1
-      active_tab_foreground   #3d59a1
-      active_tab_background   #16161e
       active_tab_font_style   bold
-      inactive_tab_foreground #787c99
-      inactive_tab_background #16161e
       inactive_tab_font_style bold
-      tab_bar_background #101014
 
-      # Title bar
-      macos_titlebar_color #16161e
+      # Everything that changes with light/dark mode: see
+      # ./kitty-theme-settings.nix, which (re)writes this file whenever
+      # org.gnome.desktop.interface color-scheme changes and reloads kitty.
+      include theme-auto.conf
     '';
   };
 }

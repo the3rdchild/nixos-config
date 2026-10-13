@@ -6,6 +6,7 @@
     ./git.nix
     ./starship.nix
     ./kitty.nix
+    ./micro.nix
     ./mime.nix
     ./zen.nix
     ./ii-session
