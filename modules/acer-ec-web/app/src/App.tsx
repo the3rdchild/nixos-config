@@ -2,6 +2,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, getStatus, toHex, type Effect, type Status } from "./api";
 import { getMetrics, type Metrics } from "./metrics";
 import { COOL_C, HOT_C, MODE_LABELS, clamp } from "./effects";
+import {
+  applyResolvedTheme,
+  getStoredMode,
+  nextMode,
+  resolveTheme,
+  setStoredMode,
+  watchSystemTheme,
+  type ThemeMode,
+} from "./theme";
 import { AppsCard } from "./components/AppsCard";
 import { FanRotor } from "./components/FanRotor";
 import { KeyboardPreview } from "./components/KeyboardPreview";
@@ -9,6 +18,12 @@ import { PaletteEditor } from "./components/PaletteEditor";
 import { Segmented } from "./components/Segmented";
 import { Sparkline } from "./components/Sparkline";
 import { SystemCard } from "./components/SystemCard";
+
+const THEME_LABELS: Record<ThemeMode, string> = {
+  dark: "Dark",
+  light: "Light",
+  auto: "Auto",
+};
 
 const PROFILES = [
   { value: 1, label: "Quiet", sub: "profile 1" },
@@ -64,6 +79,24 @@ export default function App() {
   // than just the little swatch.
   const [accent, setAccent] = useState("#5b8cff");
   const accentAt = useRef(0);
+
+  // Light/dark/auto. The inline script in index.html already applied the
+  // resolved theme before paint, so this just keeps it in sync going forward.
+  const [themeMode, setThemeMode] = useState<ThemeMode>(getStoredMode);
+
+  useEffect(() => {
+    applyResolvedTheme(resolveTheme(themeMode));
+    if (themeMode !== "auto") return;
+    return watchSystemTheme(applyResolvedTheme);
+  }, [themeMode]);
+
+  const cycleTheme = () => {
+    setThemeMode((m) => {
+      const next = nextMode(m);
+      setStoredMode(next);
+      return next;
+    });
+  };
 
   const brightHeld = useRef(false);
   const fan2Held = useRef(false);
@@ -209,6 +242,9 @@ export default function App() {
             <span className="head__stat">{clamp(watts, 0, 999).toFixed(1)} W</span>
           ) : null}
           {temp != null ? <span className="head__stat">{temp.toFixed(0)}°C</span> : null}
+          <button type="button" className="ghost" onClick={cycleTheme}>
+            {THEME_LABELS[themeMode]}
+          </button>
         </div>
       </header>
 
