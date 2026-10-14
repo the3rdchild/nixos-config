@@ -7,12 +7,13 @@
   # /etc/nixos is a symlink into the git repo rather than a second copy of the
   # config. The two used to be separate trees and silently diverged — package
   # edits landed only in /etc/nixos, module work only in the repo. Everything
-  # now builds from /mnt/doc/config; this keeps the conventional path valid.
+  # now builds from /mnt/shared/nixos-config; this keeps the conventional path
+  # valid. (It lived on /mnt/doc until that TEAM SSD was removed.)
   #
-  # /mnt/doc is NTFS-over-fuse (modules/filesystems.nix). If that mount is ever
-  # missing the symlink dangles, but nixos-rebuild can still be pointed at a
-  # store path or a generation directly, so it is not a recovery hazard.
-  environment.etc."nixos".source = "/mnt/doc/config";
+  # /mnt/shared is ntfs3 with `nofail` (modules/filesystems.nix). If that mount
+  # is ever missing the symlink dangles, but nixos-rebuild can still be pointed
+  # at a store path or a generation directly, so it is not a recovery hazard.
+  environment.etc."nixos".source = "/mnt/shared/nixos-config";
 
   # winboat (modules/package.nix) is an Electron app and nixpkgs still pins it
   # to electron 40.10.5, which upstream has marked EOL/insecure. Without this

@@ -104,11 +104,11 @@
   # is the *guest's*, not the host's, and Windows has both. USB 3.0 for
   # gigabit, though PLC traffic could not care less.
   #
-  # What this gives up: the host cannot talk to the controller. python-fins,
-  # libplctag, and the OpenPLC work in ./openplc.nix would all be inside the
-  # guest only. If host-side access is ever wanted, bridge the USB NIC instead
-  # of passing it through — the failure modes above are about sharing ONE port,
-  # and do not apply to a NIC dedicated to the bridge.
+  # What this gives up: the host cannot talk to the controller. python-fins
+  # and libplctag would both be inside the guest only. If host-side access is
+  # ever wanted, bridge the USB NIC instead of passing it through — the
+  # failure modes above are about sharing ONE port, and do not apply to a NIC
+  # dedicated to the bridge.
   #
   # To wire it up: plug the adapter, read the ids from `lsusb`, and add to the
   # domain in ./libvirt.nix

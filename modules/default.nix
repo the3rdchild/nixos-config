@@ -27,7 +27,6 @@
     ./acer-ec.nix
     ./mousekeys.nix
     ./acer-ec-web.nix
-    ./openplc.nix
     ./hotspot.nix
   ];
 }

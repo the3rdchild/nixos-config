@@ -55,7 +55,8 @@ in
   };
 
   # Dolphin right-click → "Open in Local Web Player": opens the folder (or a
-  # file's parent folder) in Zen. The player (/mnt/doc/local-web-player) loads
+  # file's parent folder) in Zen. The player (formerly /mnt/doc/local-web-player,
+  # not in the TEAM SSD backup — only local-web-player-win survived) loads
   # a path from the URL hash — see public/js/main.js, `fromHash`.
   xdg.dataFile."kio/servicemenus/open-in-web-player.desktop" = {
     executable = true;

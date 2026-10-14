@@ -68,7 +68,7 @@
     #
     # Which leaves the EC cut as the only way out of a hung graphical session,
     # and a hard cut leaves the NTFS volumes dirty — ntfs3 then refuses to
-    # mount /mnt/doc until chkdsk runs from Windows. See kernel.sysrq below.
+    # mount /mnt/shared until chkdsk runs from Windows. See kernel.sysrq below.
     HandlePowerKey = "ignore";
     HandlePowerKeyLongPress = "ignore";
 
@@ -99,8 +99,10 @@
   #
   # With both power-key actions ignored above, the only exit from a frozen
   # display (no greeter, no input) used to be the EC's ~4s hard cut, which
-  # leaves /mnt/doc and /mnt/shared dirty. On 2026-09-16 that is exactly what
-  # happened, and ntfs3 refused /mnt/doc until chkdsk ran from Windows.
+  # leaves the NTFS volumes dirty. On 2026-09-16 that is exactly what happened,
+  # and ntfs3 refused /mnt/doc (the since-removed TEAM SSD) until chkdsk ran
+  # from Windows. /mnt/shared, which now also holds this repo, is exposed the
+  # same way.
   #
   # systemd's default is 16 (sync only). 176 = 16 sync + 32 remount read-only
   # + 128 reboot/poweroff, so holding Alt+SysRq (PrtSc) and pressing
