@@ -36,7 +36,24 @@
       # oven/bun dan mikefarah/yq). Ia hanya berlaku untuk tarikan docker.io;
       # registry lain (ghcr.io, public.ecr.aws) tetap lewat jalur biasa.
       registry-mirrors = [ "https://mirror.gcr.io" ];
+
+      # Jalankan docker-init (tini) sebagai PID 1 di setiap container.
+      #
+      # Tanpa ini, `node app.js` jadi PID 1, dan kernel tidak memberi PID 1
+      # handler sinyal default: SIGTERM diabaikan kecuali aplikasinya sendiri
+      # memasang process.on("SIGTERM"). ai-adapter begitu - tiap shutdown
+      # scope container-nya menunggu 90 detik penuh lalu di-SIGKILL, yang
+      # tampak sebagai "A stop job is running for User Manager for UID 1000".
+      # Container yang sudah membawa tini sendiri tidak terganggu (tini di
+      # bawah docker-init berjalan normal). Berlaku saat container di-start,
+      # jadi cukup restart, tidak perlu recreate.
+      init = true;
     };
   };
+
+  # Jaring pengaman: batas waktu stop default di user manager (90 detik)
+  # diturunkan, supaya satu container/service yang tidak merespons SIGTERM
+  # tidak bisa menahan shutdown selama 1,5 menit.
+  systemd.user.settings.Manager.DefaultTimeoutStopSec = "15s";
   users.users.noouoops.extraGroups = [ "docker" ];
 }
