@@ -189,7 +189,11 @@ in
 
   # Runs as root because fan1_duty_set is root-only and stays that way — see
   # the tmpfiles rules below for why. ExecStop releases the pin so stopping or
-  # restarting the unit does not leave the fans locked at maximum.
+  # restarting the unit does not leave the fans locked at maximum. release
+  # keeps the current profile, so on its own a reboot from profile 4 still
+  # reaches firmware POST in profile 4 — which hung at the Acer logo. The reset
+  # to profile 2 for reboot/poweroff is done by acer_fanctl's reboot notifier,
+  # after all of userspace has stopped.
   systemd.services.acer-fan-max = {
     description = "Pin both fans to maximum while the EC is in profile 4";
     wantedBy = [ "multi-user.target" ];

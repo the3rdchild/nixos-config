@@ -11,6 +11,7 @@
 #include <linux/err.h>
 #include <linux/platform_device.h>
 #include <linux/platform_profile.h>
+#include <linux/reboot.h>
 #include "acer_ec_core.h"
 
 #define DRV_NAME "acer_fanctl"
@@ -336,6 +337,44 @@ static int profile_param = 2;
 module_param(profile_param, int, 0444);
 MODULE_PARM_DESC(profile_param, "Default fan profile (1=quiet 2=balanced 3=performance 4=gaming)");
 
+/*
+ * --- reboot/poweroff: hand the EC back in its boot state ---
+ *
+ * The EC keeps whatever profile and manual duty it was last given across a
+ * warm reboot — it never loses power. Rebooting from profile 4 with both
+ * duties pinned at 255 (acer-fan-max) left the firmware hanging at the Acer
+ * logo; a cold boot, or a reboot from balanced, did not. Firmware POST
+ * evidently expects the EC on its own curve.
+ *
+ * So on every orderly restart/halt/poweroff, put it back on profile 2 —
+ * balanced, the EC's automatic curve and what this driver loads with by
+ * default. Fixed at 2 rather than profile_param on purpose: the point is a
+ * state the firmware is known to cope with, not whatever was configured.
+ * Bounce through profile 1 first, same as fan_auto: re-sending the active
+ * profile is a no-op, so a manual duty under profile 2 would otherwise
+ * survive.
+ *
+ * Reboot notifiers run after userspace is gone (nothing can re-pin the fans
+ * afterwards) and before device_shutdown(), so ACPI SCMD still works.
+ * Emergency restarts (SysRq-B, panic) skip notifiers and are not covered.
+ */
+#define REBOOT_PROFILE 2
+
+static int acer_fanctl_reboot(struct notifier_block *nb, unsigned long action,
+			      void *data)
+{
+	if (ec_core_scmd(0x69, BIT(1 - 1), 0, 0, 0) ||
+	    ec_core_scmd(0x69, BIT(REBOOT_PROFILE - 1), 0, 0, 0))
+		pr_warn("could not reset EC profile for reboot\n");
+	else
+		profile_cur = REBOOT_PROFILE;
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block acer_fanctl_reboot_nb = {
+	.notifier_call = acer_fanctl_reboot,
+};
+
 static int __init acer_fanctl_init(void)
 {
 	int ret;
@@ -381,12 +420,17 @@ static int __init acer_fanctl_init(void)
 		}
 	}
 
+	ret = register_reboot_notifier(&acer_fanctl_reboot_nb);
+	if (ret)
+		pr_warn("reboot notifier registration failed (%d)\n", ret);
+
 	pr_info("loaded (profile=%d) - see /sys/kernel/acer_fanctl/\n", profile_param);
 	return 0;
 }
 
 static void __exit acer_fanctl_exit(void)
 {
+	unregister_reboot_notifier(&acer_fanctl_reboot_nb);
 	if (ppdev)
 		platform_profile_remove(ppdev);
 	if (pdev)
