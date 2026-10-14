@@ -12,6 +12,8 @@
 #include <linux/platform_device.h>
 #include <linux/platform_profile.h>
 #include <linux/reboot.h>
+#include <linux/mutex.h>
+#include <linux/jiffies.h>
 #include "acer_ec_core.h"
 
 #define DRV_NAME "acer_fanctl"
@@ -53,6 +55,54 @@ FAN_SHOW8(tmp_temp, 0x07)
 /* --- sysfs: profile (1-4) --- */
 static int profile_cur;
 
+/*
+ * Duties we asked for recently, used in place of EC RAM for the sibling fan.
+ *
+ * SCMD 0x68 always carries both duties (see the duty stores below), so each
+ * store has to fill in the fan it is not addressing. EC RAM is a poor source
+ * for that right after a write: 0xCE/0xCF only reflect a new duty ~0.5 s
+ * later. Measured, with the EC curve holding DUT1 at 145 in profile 4:
+ *
+ *     fan1_duty_set=255; fan2_duty_set=255   ->  dut1 stays 144  (RPM1 ~1070)
+ *     fan2_duty_set=255; fan1_duty_set=255   ->  dut1 255        (RPM1 4687)
+ *
+ * The fan2 store read the stale 145 back out of 0xCE and re-sent it, undoing
+ * the fan1 write. acer-fan-max writes in exactly that order every 3 s, so the
+ * CPU fan sat at 57% duty in "performance" while the GPU fan ran flat out.
+ *
+ * So remember each requested duty for DUTY_SETTLE and prefer it over EC RAM.
+ * Past that window EC RAM is authoritative again. Any profile change hands
+ * the fans back to the EC curve, so it forgets them.
+ */
+#define DUTY_SETTLE (2 * HZ)
+
+static DEFINE_MUTEX(duty_lock);
+static u8 duty_req[2];
+static unsigned long duty_req_at[2];
+static bool duty_req_valid[2];
+
+static u8 duty_sibling(int fan, u16 off)
+{
+	if (duty_req_valid[fan] &&
+	    time_before(jiffies, duty_req_at[fan] + DUTY_SETTLE))
+		return duty_req[fan];
+	return ec_core_read8(off);
+}
+
+static void duty_remember(int fan, u8 val)
+{
+	duty_req[fan] = val;
+	duty_req_at[fan] = jiffies;
+	duty_req_valid[fan] = true;
+}
+
+static void duty_forget(void)
+{
+	mutex_lock(&duty_lock);
+	duty_req_valid[0] = duty_req_valid[1] = false;
+	mutex_unlock(&duty_lock);
+}
+
 static ssize_t profile_store(struct kobject *kobj, struct kobj_attribute *attr,
 			     const char *buf, size_t count)
 {
@@ -63,6 +113,7 @@ static ssize_t profile_store(struct kobject *kobj, struct kobj_attribute *attr,
 	ret = ec_core_scmd(0x69, BIT(val - 1), 0, 0, 0);
 	if (ret) return ret;
 	profile_cur = val;
+	duty_forget();
 	return count;
 }
 
@@ -89,10 +140,9 @@ static ssize_t profile_show(struct kobject *kobj, struct kobj_attribute *attr, c
  * reclaim the fan. The README's claim that the EC restores DUT1 within
  * ~500ms does not hold on this firmware.
  *
- * So read the sibling fan's current duty back out of EC RAM and re-send it
- * unchanged. This races the EC's own curve in principle, but the window is
- * microseconds against a curve that moves on a multi-second cadence, and the
- * worst case is one stale duty that the next auto update corrects.
+ * So re-send the sibling fan's current duty unchanged: the one we requested
+ * within the last DUTY_SETTLE if there is one, otherwise what EC RAM holds
+ * (see duty_sibling() for why EC RAM alone was not enough).
  *
  * Note this makes the written fan MANUAL until something hands it back —
  * write `fan_auto` (or `profile`) for that.
@@ -104,7 +154,11 @@ static ssize_t fan2_duty_set_store(struct kobject *kobj, struct kobj_attribute *
 	int ret = kstrtou32(buf, 0, &val);
 	if (ret) return ret;
 	if (val > 255) return -EINVAL;
-	ret = ec_core_scmd(0x68, ec_core_read8(0xCE), val, 0, 0);
+	mutex_lock(&duty_lock);
+	ret = ec_core_scmd(0x68, duty_sibling(0, 0xCE), val, 0, 0);
+	if (!ret)
+		duty_remember(1, val);
+	mutex_unlock(&duty_lock);
 	if (ret) return ret;
 	return count;
 }
@@ -126,7 +180,11 @@ static ssize_t fan1_duty_set_store(struct kobject *kobj, struct kobj_attribute *
 	int ret = kstrtou32(buf, 0, &val);
 	if (ret) return ret;
 	if (val > 255) return -EINVAL;
-	ret = ec_core_scmd(0x68, val, ec_core_read8(0xCF), 0, 0);
+	mutex_lock(&duty_lock);
+	ret = ec_core_scmd(0x68, val, duty_sibling(1, 0xCF), 0, 0);
+	if (!ret)
+		duty_remember(0, val);
+	mutex_unlock(&duty_lock);
 	if (ret) return ret;
 	return count;
 }
@@ -165,6 +223,7 @@ static ssize_t fan_auto_store(struct kobject *kobj, struct kobj_attribute *attr,
 	if (ret) return ret;
 
 	profile_cur = val;
+	duty_forget();
 	return count;
 }
 
@@ -304,6 +363,7 @@ static int acer_pp_set(struct device *dev, enum platform_profile_option profile)
 		return -EIO;
 
 	profile_cur = val;
+	duty_forget();
 	return 0;
 }
 
@@ -368,6 +428,7 @@ static int acer_fanctl_reboot(struct notifier_block *nb, unsigned long action,
 		pr_warn("could not reset EC profile for reboot\n");
 	else
 		profile_cur = REBOOT_PROFILE;
+	duty_forget();
 	return NOTIFY_DONE;
 }
 

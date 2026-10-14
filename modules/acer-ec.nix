@@ -143,12 +143,18 @@ let
         # profile write — neither of which raises an event we could hook. So
         # compare against the live duties every pass and only write when they
         # have drifted, which keeps this idempotent and quiet.
-        if [ "$(cat "$S/fan1_duty")" != 255 ] || [ "$(cat "$S/fan2_duty")" != 255 ]; then
-          # Order does not matter: each store re-sends the sibling's current
-          # duty, so the pair converges on (255, 255) either way.
-          echo 255 > "$S/fan1_duty_set"
-          echo 255 > "$S/fan2_duty_set"
-        fi
+        #
+        # Only the fan that drifted is written, and fan1 (CPU) always last.
+        # Each store re-sends the sibling's duty, and older drivers read it
+        # back from EC RAM, which lags a write by ~0.5 s. fan1-then-fan2 made
+        # the fan2 store re-send fan1's stale curve duty every pass: measured
+        # dut1 stuck at 145 (57%, ~1070 RPM) in profile 4 while dut2 sat at
+        # 255. Current drivers remember requested duties (duty_sibling() in
+        # acer_fanctl.c); this order keeps the old ones correct too.
+        d1=$(cat "$S/fan1_duty")
+        d2=$(cat "$S/fan2_duty")
+        [ "$d2" != 255 ] && echo 255 > "$S/fan2_duty_set"
+        [ "$d1" != 255 ] && echo 255 > "$S/fan1_duty_set"
       fi
       # Poll cadence is split by whether there is anything to do. In the
       # pinned profile the fans must be re-asserted promptly, so 3 s stands.
