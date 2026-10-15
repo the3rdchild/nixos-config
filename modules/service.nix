@@ -1,4 +1,4 @@
-{ ... }:
+{ pkgs, ... }:
 {
   # NOTE: SDDM is configured in ./sddm.nix, not here — including the display
   # server mode and greeter compositor that services.desktopManager.plasma6
@@ -8,6 +8,16 @@
   # it comes from programs.hyprland in ./package.nix.
   services.printing.enable = true;
   services.openssh.enable = true;
+
+  # raspi-server is reachable from anywhere via its Cloudflare Tunnel, behind
+  # Cloudflare Access. `ssh noouoops@ssh.noouoops.my.id` opens a browser for
+  # the Access (email PIN) login the first time, then reuses the token.
+  # On the LAN/tailnet, 192.168.100.200 / 100.120.32.64 need none of this.
+  environment.systemPackages = [ pkgs.cloudflared ];
+  programs.ssh.extraConfig = ''
+    Host ssh.noouoops.my.id
+      ProxyCommand ${pkgs.cloudflared}/bin/cloudflared access ssh --hostname %h
+  '';
   services.cloudflare-warp.enable = true;
   services.flatpak.enable = true;
   services.tailscale.enable = true;
