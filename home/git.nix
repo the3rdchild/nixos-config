@@ -17,6 +17,13 @@
     };
   };
 
+  # GitHub CLI — buat buka PR dari mesin ini. Login sekali manual:
+  # `gh auth login` (token disimpan di ~/.config/gh/hosts.yml, bukan di repo)
+  programs.gh = {
+    enable = true;
+    settings.git_protocol = "ssh";
+  };
+
   programs.lazygit = {
     enable = true;
   };
