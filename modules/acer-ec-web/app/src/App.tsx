@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, getStatus, toHex, type Effect, type Status } from "./api";
-import { getMetrics, type Metrics } from "./metrics";
+import { fmtDuration, getMetrics, type Metrics } from "./metrics";
 import { COOL_C, HOT_C, MODE_LABELS, clamp } from "./effects";
 import {
   applyResolvedTheme,
@@ -12,6 +12,7 @@ import {
   type ThemeMode,
 } from "./theme";
 import { AppsCard } from "./components/AppsCard";
+import { BatteryCard } from "./components/BatteryCard";
 import { FanRotor } from "./components/FanRotor";
 import { KeyboardPreview } from "./components/KeyboardPreview";
 import { PaletteEditor } from "./components/PaletteEditor";
@@ -64,6 +65,7 @@ export default function App() {
   const [error, setError] = useState("");
   const [history, setHistory] = useState<number[]>([]);
   const [cpuHistory, setCpuHistory] = useState<number[]>([]);
+  const [rateHistory, setRateHistory] = useState<number[]>([]);
 
   // Local copies of the controls. Polling refreshes them from the server,
   // except while a control is being held (focused) or was touched in the
@@ -135,6 +137,10 @@ export default function App() {
     setMetrics(m);
     if (m.cpu?.usage != null) {
       setCpuHistory((h) => [...h, (m.cpu?.usage as number) * 100].slice(-CPU_HISTORY));
+    }
+    const bat = m.power?.battery;
+    if (bat) {
+      setRateHistory((h) => [...h, bat.rate_w ?? 0].slice(-HISTORY));
     }
   }, []);
 
@@ -223,6 +229,9 @@ export default function App() {
   const showColor = effect.mode === "static" || effect.mode === "breathing";
   const showSpeed = effect.mode !== "static" && effect.mode !== "reactive";
   const watts = metrics?.power?.total;
+  const bat = metrics?.power?.battery;
+  const batLeft =
+    bat?.status === "Discharging" && !bat.settling ? (bat.to_action ?? bat.to_empty) : null;
 
   return (
     <div className="page">
@@ -242,6 +251,12 @@ export default function App() {
             <span className="head__stat">{clamp(watts, 0, 999).toFixed(1)} W</span>
           ) : null}
           {temp != null ? <span className="head__stat">{temp.toFixed(0)}°C</span> : null}
+          {bat?.capacity != null ? (
+            <span className="head__stat" title={bat.status ?? undefined}>
+              {bat.status === "Charging" ? "⚡" : ""}
+              {bat.capacity}%{batLeft != null ? ` · ${fmtDuration(batLeft, true)}` : ""}
+            </span>
+          ) : null}
           <button type="button" className="ghost" onClick={cycleTheme}>
             {THEME_LABELS[themeMode]}
           </button>
@@ -413,6 +428,7 @@ export default function App() {
         </section>
 
         <SystemCard metrics={metrics} cpuHistory={cpuHistory} accent={accent} />
+        <BatteryCard battery={bat} rateHistory={rateHistory} accent={accent} />
         <AppsCard apps={metrics?.apps} ready={!!metrics?.ready} accent={accent} />
       </div>
 

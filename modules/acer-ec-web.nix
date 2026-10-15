@@ -58,6 +58,15 @@ let
     then ''"${config.hardware.nvidia.package.bin}/bin/nvidia-smi"''
     else "None";
 
+  # upower's battery levels (power.nix) as a Python dict literal. null
+  # when upower is off, so the panel just omits the power-off estimate.
+  upowerLevels =
+    let
+      up = config.services.upower;
+      lvl = v: if up.enable then toString v else "None";
+    in
+    ''{"low": ${lvl up.percentageLow}, "critical": ${lvl up.percentageCritical}, "action": ${lvl up.percentageAction}}'';
+
   # The React + ThreeUI panel. src is the whole app tree (package.json,
   # package-lock.json, vite.config.ts, src/); the derivation runs
   # `npm run build` (tsc -b && vite build) and installs the dist/ output.
@@ -533,27 +542,111 @@ let
     BATTERY = next(iter(sorted(glob.glob("/sys/class/power_supply/BAT*"))), None)
     ADAPTER = next(iter(sorted(glob.glob("/sys/class/power_supply/A[CD]*"))), None)
 
-    def battery():
+    # upower's thresholds from power.nix, so the panel can say how long until
+    # the machine powers itself off rather than how long until a 0% it will
+    # never actually reach.
+    UPOWER = ${upowerLevels}
+
+    # Time constant of the rate behind the time estimates. The gauge's
+    # current_now is instantaneous — it swings 3x between an idle desktop
+    # and a page load — and dividing the remaining charge by that gives an
+    # estimate that jumps by hours every poll. 60 s averages over the bursts
+    # while still following a real change (a game starting) within a minute
+    # or two.
+    BAT_TAU = 60.0
+    # Below this much averaging the estimate is flagged as settling, and the
+    # UI says so instead of presenting one second of current as a forecast.
+    BAT_SETTLE = 20.0
+
+    def battery(smooth):
+        # `smooth` is the sampler's running state for the averaged rate; it
+        # is dropped whenever the sampler idles, like every other baseline.
         if not BATTERY:
             return None
         state = read(BATTERY + "/status")
-        watts = None
-        p = read_int(BATTERY + "/power_now")
-        if p is not None:
-            watts = p / 1e6
+        volts = read_int(BATTERY + "/voltage_now")
+
+        # The gauge speaks one of two dialects. energy_* / power_now are µWh
+        # and µW; charge_* / current_now are µAh and µA. This pack speaks
+        # charge. The estimate is done in whichever dialect the pack uses,
+        # so remaining / rate is a ratio of like units and no voltage
+        # conversion can skew it. Wh figures for display convert charge at
+        # the design voltage, which is what upower does too: voltage_now
+        # sags with load and would make "energy" wobble with the CPU.
+        if read_int(BATTERY + "/energy_now") is not None:
+            now = read_int(BATTERY + "/energy_now")
+            full = read_int(BATTERY + "/energy_full")
+            design = read_int(BATTERY + "/energy_full_design")
+            rate = read_int(BATTERY + "/power_now")
+            to_wh = lambda v: v / 1e6
+            watts = abs(rate) / 1e6 if rate is not None else None
         else:
-            i = read_int(BATTERY + "/current_now")
-            u = read_int(BATTERY + "/voltage_now")
-            if i is not None and u is not None:
-                watts = i * u / 1e12
+            now = read_int(BATTERY + "/charge_now")
+            full = read_int(BATTERY + "/charge_full")
+            design = read_int(BATTERY + "/charge_full_design")
+            rate = read_int(BATTERY + "/current_now")
+            vd = read_int(BATTERY + "/voltage_min_design") or volts
+            to_wh = (lambda v: v * vd / 1e12) if vd else (lambda v: None)
+            watts = (abs(rate) * volts / 1e12
+                     if rate is not None and volts is not None else None)
+        # Some gauges sign the rate by direction; status already says that.
+        rate = abs(rate) if rate else None
+
+        moving = state in ("Discharging", "Charging") and bool(rate)
+        t = time.monotonic()
+        if not moving or smooth.get("status") != state:
+            # Plugging or unplugging changes the rate by an order of
+            # magnitude; averaging across that would blend two regimes.
+            smooth.clear()
+        smooth["status"] = state
+        if moving:
+            avg = smooth.get("rate")
+            if avg is None:
+                smooth["rate"], smooth["since"] = float(rate), t
+            else:
+                dt = t - smooth["at"]
+                smooth["rate"] = avg + (rate - avg) * (dt / (BAT_TAU + dt))
+            smooth["at"] = t
+        avg = smooth.get("rate")
+
+        to_empty = to_full = to_action = None
+        if avg and now is not None:
+            if state == "Discharging":
+                to_empty = now / avg * 3600
+                if full and UPOWER["action"] is not None:
+                    floor = full * UPOWER["action"] / 100.0
+                    to_action = max(now - floor, 0) / avg * 3600
+            elif state == "Charging" and full:
+                # Linear, so it runs optimistic through the last ~10%, where
+                # the charger tapers to constant voltage. Labelled "about".
+                to_full = max(full - now, 0) / avg * 3600
+
+        cycles = read_int(BATTERY + "/cycle_count")
+        rnd = lambda v, n=1: round(v, n) if v is not None else None
         return {
             "status": state,
             "capacity": read_int(BATTERY + "/capacity"),
+            "level": read(BATTERY + "/capacity_level"),
             # Only meaningful while discharging. On AC this gauge reports
             # the charge current, or nothing once the pack is full — either
             # way it is not what the machine is consuming.
             "watts": watts if state == "Discharging" else None,
+            # Instantaneous flow in either direction, for the rate readout.
+            "rate_w": rnd(watts, 2) if moving else None,
             "ac": (read_int(ADAPTER + "/online") == 1) if ADAPTER else None,
+            "energy_wh": rnd(to_wh(now)) if now is not None else None,
+            "full_wh": rnd(to_wh(full)) if full is not None else None,
+            "design_wh": rnd(to_wh(design)) if design is not None else None,
+            "health": round(full / design, 3) if full and design else None,
+            # 0 is how most ACPI gauges say "not reported", not a new pack.
+            "cycles": cycles or None,
+            "voltage": rnd(volts / 1e6, 2) if volts is not None else None,
+            "technology": read(BATTERY + "/technology"),
+            "to_empty": round(to_empty) if to_empty is not None else None,
+            "to_action": round(to_action) if to_action is not None else None,
+            "to_full": round(to_full) if to_full is not None else None,
+            "settling": bool(avg) and t - smooth.get("since", t) < BAT_SETTLE,
+            "thresholds": UPOWER,
         }
 
     def find_igpu():
@@ -770,6 +863,7 @@ let
         gpu = {"present": bool(NVIDIA_SMI)}
         gpu_pids = {}
         apps = []
+        bat_smooth = {}
         tick = 0
         while True:
             with metrics_lock:
@@ -781,6 +875,7 @@ let
                 prev_cpu, prev_rapl, prev_procs = [], {}, {}
                 prev_at = prev_proc_at = 0.0
                 gpu_pids, apps, tick = {}, [], 0
+                bat_smooth = {}
                 with metrics_lock:
                     metrics_state["snapshot"] = {"ready": False}
                 metrics_wake.wait()
@@ -832,7 +927,7 @@ let
                 # on this part — the iGPU's own rail, not a leftover.
                 ig["watts"] = round(unc_w, 3)
 
-            bat = battery()
+            bat = battery(bat_smooth)
             total = None
             source = None
             if bat and bat.get("watts"):

@@ -57,17 +57,43 @@ export interface Rail {
   watts: number;
 }
 
+export interface Battery {
+  /** sysfs status: "Discharging", "Charging", "Full", "Not charging"… */
+  status: string | null;
+  /** 0–100. */
+  capacity: number | null;
+  /** sysfs capacity_level: "Normal", "Low", "Critical"… */
+  level: string | null;
+  /** Whole-system draw — set only while discharging. */
+  watts: number | null;
+  /** Instantaneous flow in either direction, null when idle on AC. */
+  rate_w: number | null;
+  ac: boolean | null;
+  energy_wh: number | null;
+  full_wh: number | null;
+  design_wh: number | null;
+  /** 0–1: what the pack holds now against what it held new. */
+  health: number | null;
+  cycles: number | null;
+  voltage: number | null;
+  technology: string | null;
+  /** Seconds, from a ~1-minute average of the rate. */
+  to_empty: number | null;
+  /** Seconds until upower's power-off level, while discharging. */
+  to_action: number | null;
+  to_full: number | null;
+  /** True for the first ~20 s after the average was (re)seeded. */
+  settling: boolean;
+  /** upower's percentages from power.nix; null when upower is off. */
+  thresholds: { low: number | null; critical: number | null; action: number | null };
+}
+
 export interface Power {
   /** Whole-system draw, or null when nothing can measure it. */
   total: number | null;
   /** "battery" (real, discharging only) or "psys" (RAPL platform domain). */
   source: string | null;
-  battery: {
-    status: string | null;
-    capacity: number | null;
-    watts: number | null;
-    ac: boolean | null;
-  } | null;
+  battery: Battery | null;
   rails: Rail[];
 }
 
@@ -115,4 +141,17 @@ export function fmtWatts(w: number | null | undefined): string {
 
 export function fmtPct(v: number | null | undefined): string {
   return v == null ? "—" : `${Math.round(v * 100)}%`;
+}
+
+/** Seconds → "2 h 05 min" / "45 min". Rounded to the minute: the estimate
+ *  is not good to the second and should not look like it is. */
+export function fmtDuration(s: number | null | undefined, compact = false): string {
+  if (s == null || !Number.isFinite(s)) return "—";
+  const m = Math.max(0, Math.round(s / 60));
+  if (m < 60) return compact ? `${m}m` : `${m} min`;
+  const h = Math.floor(m / 60);
+  // Past a day the rate is near zero and the figure means nothing.
+  if (h >= 24) return compact ? ">24h" : "> 24 h";
+  const mm = String(m % 60).padStart(2, "0");
+  return compact ? `${h}h${mm}m` : `${h} h ${mm} min`;
 }

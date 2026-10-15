@@ -156,11 +156,11 @@ export function SystemCard({ metrics, cpuHistory, accent }: SystemCardProps) {
             No per-rail figures — the powercap counters are unreadable.
           </p>
         )}
-        {power?.battery ? (
+        {power?.source ? (
           <p className="hint">
-            Battery {power.battery.capacity != null ? `${power.battery.capacity}%` : "—"}
-            {power.battery.status ? ` · ${power.battery.status.toLowerCase()}` : ""}
-            {power.source === "psys" ? " · total from RAPL psys" : ""}
+            {power.source === "battery"
+              ? "Total from the battery gauge."
+              : "Total from RAPL psys."}
           </p>
         ) : null}
       </div>
