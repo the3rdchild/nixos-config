@@ -96,6 +96,7 @@
     # than through the GTK stack.
     libreoffice-qt6-still
     zip # Flutter prerequisite on Linux
+    kicad
   ];
 
   # LibreOffice picks its VCL backend from XDG_CURRENT_DESKTOP, and that is
