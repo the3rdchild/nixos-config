@@ -97,6 +97,7 @@
     libreoffice-qt6-still
     zip # Flutter prerequisite on Linux
     kicad
+    ugs # Universal Gcode Sender, CNC/GRBL controller
   ];
 
   # LibreOffice picks its VCL backend from XDG_CURRENT_DESKTOP, and that is
