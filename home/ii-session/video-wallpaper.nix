@@ -65,7 +65,7 @@
   });
 
   # Pause or resume one monitor's video, over the mpv IPC socket switchwall.sh
-  # now opens per output (see the patch). The asked-for behaviour is that the
+  # opens per output. The asked-for behaviour is that the
   # video stops only while something covers it: a fullscreen window, or the
   # overview (see videoQml.background for why that one matters). mpvpaper's
   # own --auto-pause cannot do that here: it pauses when the compositor stops
@@ -180,9 +180,9 @@
   # thumbnailPath — so the shell saw the new wallpaper before the video was
   # running or its frame existed. Now the frame comes first, then mpvpaper,
   # then thumbnailPath and wallpaperPath, in the order the shell reads them.
-  # Each mpvpaper also opens the IPC socket mpvpaperCtl talks to, and plays
-  # what videoProxy hands back; the config keeps the original's path, which
-  # is what the selector, the frame and the restore script go by.
+  # Each mpvpaper plays what videoProxy hands back (the socket mpvpaperCtl
+  # talks to is upstream's); the config keeps the original's path, which is
+  # what the selector, the frame and the restore script go by.
   #
   # Replaced as one block rather than line by line because the reorder moves
   # lines across each other; the old text is spelled out so any upstream change
@@ -329,10 +329,19 @@
         --replace-fail '            ? Config.options.background.thumbnailPath' '            ? Images.videoFramePath(path)'
     done
 
-    # switchwall.sh: the reordered video branch (see videoSwitch), the IPC
-    # socket in the restore script that relaunches mpvpaper at login, scheme
+    # switchwall.sh: the reordered video branch (see videoSwitch), the video
+    # the restore script that relaunches mpvpaper at login plays, scheme
     # detection reading the frame instead of the video, and is_video
     # case-insensitive.
+    #
+    # The per-output IPC socket is upstream's now (MPV_SOCKET_PREFIX, at the
+    # same $XDG_RUNTIME_DIR/mpvpaper-<output>.sock this patch used to add), so
+    # both video branches only keep calling it. MPVPAPER_FLAGS is emptied:
+    # upstream passes `-p -a max`, and `-a` is new in mpvpaper 1.9 where nixpkgs
+    # has 1.8 — which reports "invalid option" and then reads `max` as the
+    # output name, so no wallpaper starts. `-p` alone would work, but it is the
+    # auto-pause mpvpaperCtl says does nothing under Hyprland; pausing is done
+    # by the shell over the socket instead.
     #
     # The 1080p30 copy (see videoProxy) is made in main(), before switch()
     # tears anything down, so the old wallpaper stays up for the length of a
@@ -354,8 +363,8 @@
     substituteInPlace $qs/scripts/colors/switchwall.sh \
       --replace-fail "$(cat $TMPDIR/switch-old)" "$(cat $TMPDIR/switch-new)" \
       --replace-fail 'video-align-y=0.5 load-scripts=no"' 'video-align-y=0.5 load-scripts=no profile=fast"' \
-      --replace-fail 'mpvpaper -o "$VIDEO_OPTS" "\$monitor" "$video_path"' \
-                     'mpvpaper -o "$VIDEO_OPTS input-ipc-server=\$XDG_RUNTIME_DIR/mpvpaper-\$monitor.sock" "\$monitor" "\$video"' \
+      --replace-fail '"\$monitor" "$video_path"' '"\$monitor" "\$video"' \
+      --replace-fail 'MPVPAPER_FLAGS="-p -a max"' 'MPVPAPER_FLAGS=""' \
       --replace-fail '    switch "$imgpath" "$mode_flag"' '    if [[ -z "$colors_only_flag" ]]; then
             echo $$ > "$XDG_RUNTIME_DIR/ii-switchwall.latest"
             if is_video "$imgpath"; then
@@ -370,6 +379,7 @@
                      'detected_type="$(detect_scheme_type_from_image "$(is_video "$imgpath" && ${videoFrame} "$imgpath" || echo "$imgpath")")"' \
       --replace-fail '    local extension="''${1##*.}"' '    local extension="''${1##*.}"; extension="''${extension,,}"'
     [ "$(grep -c 'input-ipc-server=' $qs/scripts/colors/switchwall.sh)" = "2" ] || exit 1
+    [ "$(grep -c '^MPVPAPER_FLAGS=""$' $qs/scripts/colors/switchwall.sh)" = "1" ] || exit 1
     # Inside create_restore_script's unquoted heredoc: \$( runs at login,
     # $video_path is the original, filled in when the script is written.
     printf '%s\n' 'video="\$(ii-video-proxy "$video_path" 2>/dev/null || echo "$video_path")"' > $TMPDIR/restore-video

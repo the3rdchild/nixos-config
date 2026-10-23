@@ -3,8 +3,9 @@ if [[ -z "$colors_only_flag" ]]; then
 
     local video_path="$imgpath"
     monitors=$(hyprctl monitors -j | jq -r '.[] | .name')
+    rm -f "$MPV_SOCKET_PREFIX"*.sock
     for monitor in $monitors; do
-        mpvpaper -o "$VIDEO_OPTS" "$monitor" "$video_path" &
+        mpvpaper $MPVPAPER_FLAGS -o "$VIDEO_OPTS input-ipc-server=$MPV_SOCKET_PREFIX$monitor.sock" "$monitor" "$video_path" &
         sleep 0.1
     done
 fi

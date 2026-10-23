@@ -3,18 +3,18 @@
     "dots-hyprland": {
       "flake": false,
       "locked": {
-        "lastModified": 1789354057,
-        "narHash": "sha256-IKdaUJP/6QW2WMv1Lilqh39V/V7xalp/leizJW0+Gdc=",
+        "lastModified": 1791686915,
+        "narHash": "sha256-kfEDg0jGfQibLGARY+EvBFLsWj5H7F984dPDm4bGeVs=",
         "ref": "main",
-        "rev": "2f0c8bf42b803f4d597572f2a014d4e78d7d9f26",
-        "revCount": 6313,
+        "rev": "2f2a376fdb2ad738bf55f693dd0b474b64bb0ab8",
+        "revCount": 6333,
         "submodules": true,
         "type": "git",
         "url": "https://github.com/end-4/dots-hyprland"
       },
       "original": {
         "ref": "main",
-        "rev": "2f0c8bf42b803f4d597572f2a014d4e78d7d9f26",
+        "rev": "2f2a376fdb2ad738bf55f693dd0b474b64bb0ab8",
         "submodules": true,
         "type": "git",
         "url": "https://github.com/end-4/dots-hyprland"
@@ -23,17 +23,17 @@
     "end4-pc": {
       "flake": false,
       "locked": {
-        "lastModified": 1790071125,
-        "narHash": "sha256-we4oqYAK37hBY1m6JACVRrYa80q9B6zigPdMeRn0SZQ=",
+        "lastModified": 1792628851,
+        "narHash": "sha256-IfiHzJLR3XSVsFfkpF0aBh7Li40MsYkEtfCrFLUtwFw=",
         "owner": "pctrade",
         "repo": "end4-pC",
-        "rev": "0ff392bc69bdda1d795819c4bb8ec65e2b3658df",
+        "rev": "abde3ab4d8e388280b0837879fd25e1f4a794297",
         "type": "github"
       },
       "original": {
         "owner": "pctrade",
         "repo": "end4-pC",
-        "rev": "0ff392bc69bdda1d795819c4bb8ec65e2b3658df",
+        "rev": "abde3ab4d8e388280b0837879fd25e1f4a794297",
         "type": "github"
       }
     },

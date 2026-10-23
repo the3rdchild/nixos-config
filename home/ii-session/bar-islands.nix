@@ -55,8 +55,8 @@ in {
       --replace-fail 'import QtQuick.Layouts' 'import QtQuick.Layouts
     import Quickshell
     import qs.services' \
-      --replace-fail '                            ? Appearance.colors.colLayer0' \
-                     '                            ? (root.islandPainted ? "transparent" : Appearance.colors.colLayer0)'
+      --replace-fail '                            ? Appearance.colors.colUiBackground' \
+                     '                            ? (root.islandPainted ? "transparent" : Appearance.colors.colUiBackground)'
     insert_after $G '    property color bgColor: Appearance.colors.colPrimaryContainer' ${barIslandQml.props} '    '
     insert_after $G '    default property alias items: gridLayout.children' ${barIslandQml.background} '    '
     [ "$(grep -c '^import Quickshell$' $G)" = "1" ] || exit 1
@@ -67,9 +67,11 @@ in {
     # (-1, and -2 on the vertical bar) so adjacent borders coincide. With no
     # border the overlap would be a seam instead: two translucent islands
     # stacked on one line of pixels. So segments butt up against each other.
+    # Only the default is dropped: a border width chosen for a widget in the
+    # style editor (style.borderWidth) is explicit and stays.
     substituteInPlace $G \
-      --replace-fail 'border.width: root.paintBackground && root.isSegmented && !root.isMaterial ? 1 : 0' \
-                     'border.width: 0'
+      --replace-fail 'root.style?.borderWidth ?? (root.paintBackground && root.isSegmented && !root.isMaterial ? 1 : 0)' \
+                     'root.style?.borderWidth ?? 0'
     for f in $qs/modules/ii/bar/BarContent.qml $qs/modules/ii/verticalBar/VerticalBarContent.qml; do
       [ "$(grep -cE '^ +: Config.options\?.bar.borderless === "segmented" \? -[12]$' "$f")" = "3" ] || {
         echo "$f: expected three segmented overlaps" >&2

@@ -2,9 +2,13 @@
 // Wallpaper-adaptive islands (NixOS config, ii-session.nix): in the island
 // style the background is the wallpaper behind it, sampled at three points
 // along the group, tinted into the theme and kept readable. See
-// WallpaperRegions.
+// WallpaperRegions. Upstream's own say wins where it has one: the OLED
+// background, a colour picked for this widget, and the popup morph.
 readonly property bool islandAdaptive: Config.options.bar.cornerStyle === 2
     && root.paintBackground
+    && root.morphEdge === ""
+    && root.style?.color === undefined
+    && Config.options?.appearance.uiBackground !== "oled"
     && Config.options?.bar.borderless !== "transparent"
     && WallpaperRegions.ready
 // Where the island sits on its screen. Summed up the parent chain rather

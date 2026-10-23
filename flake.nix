@@ -53,7 +53,7 @@
     # branch, and the rev below is what Reference/dots-hyprland has checked
     # out, so the tree on disk is the tree that gets built.
     dots-hyprland = {
-      url = "git+https://github.com/end-4/dots-hyprland?ref=main&rev=2f0c8bf42b803f4d597572f2a014d4e78d7d9f26&submodules=1";
+      url = "git+https://github.com/end-4/dots-hyprland?ref=main&rev=2f2a376fdb2ad738bf55f693dd0b474b64bb0ab8&submodules=1";
       flake = false;
     };
 
@@ -67,7 +67,7 @@
     #
     # No tags at all upstream, so a rev is the only thing to pin to.
     end4-pc = {
-      url = "github:pctrade/end4-pC/0ff392bc69bdda1d795819c4bb8ec65e2b3658df";
+      url = "github:pctrade/end4-pC/abde3ab4d8e388280b0837879fd25e1f4a794297";
       flake = false;
     };
 

@@ -56,7 +56,6 @@
     kdePackages.dolphin
     obs-studio
     vscode
-    localsend
     # onboard
     dbeaver-bin
     flashprint
@@ -86,7 +85,6 @@
     screen
     openssl
     mission-center
-    firefox
     # The qt6 build, not plain libreoffice-still: that one ships only
     # libvclplug_genlo.so and libvclplug_gtk3lo.so, so LibreOffice rendered as
     # a GTK3 app and never looked at kdeglobals. This variant adds
@@ -96,7 +94,6 @@
     # than through the GTK stack.
     libreoffice-qt6-still
     zip # Flutter prerequisite on Linux
-    kicad
     ugs # Universal Gcode Sender, CNC/GRBL controller
   ];
 

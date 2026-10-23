@@ -21,19 +21,25 @@
         'decode | wl-copy && sleep ''${root.pasteDelay} && ''${root.pressPasteCommand}`]);'
     done
 
-    # Only the entry's primary action — the first of the two Cliphist.copy
-    # calls in the file. The second is the explicit "Copy" action listed beside
-    # it, which must stay copy-only; that is the whole point of having it.
+    # Only the entry's primary action — the first Cliphist.copy call in the
+    # file. ii lists an explicit "Copy" action beside it (a second call), which
+    # must stay copy-only; that is the whole point of having it. end4-pC
+    # swapped that action for Pin/Unpin, so it has the one call and nothing
+    # left to protect.
     #
     # `0,/re/s//x/` replaces the first match and nothing else, which a
     # --replace-fail anchor cannot express.
     for f in $out/.config/quickshell/*/services/LauncherSearch.qml; do
       [ -e "$f" ] || continue
+      case "$f" in
+        */quickshell/ii/*) want=2 ;;
+        *) want=1 ;;
+      esac
       before=$(grep -c 'Cliphist\.copy(entry);' "$f")
-      [ "$before" = "2" ] || { echo "LauncherSearch.qml: expected 2 Cliphist.copy call sites, found $before" >&2; exit 1; }
+      [ "$before" = "$want" ] || { echo "$f: expected $want Cliphist.copy call sites, found $before" >&2; exit 1; }
       sed -i '0,/Cliphist\.copy(entry);/s//Cliphist.paste(entry);/' "$f"
       grep -q 'Cliphist\.paste(entry);' "$f"
-      [ "$(grep -c 'Cliphist\.copy(entry);' "$f")" = "1" ] || exit 1
+      [ "$(grep -c 'Cliphist\.copy(entry);' "$f")" = "$((want - 1))" ] || exit 1
     done
   '';
 }
