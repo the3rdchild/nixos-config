@@ -18,19 +18,23 @@
     # `qs` — the binary ii and end4-pC actually run. It used to arrive as a
     # transitive input of the caelestia shell's flake, which is why dropping
     # that session could not simply delete it: session B was running
-    # caelestia's quickshell all along. This is the same rev that input
-    # resolved to (0.3.1), so the store path is unchanged by the move.
+    # caelestia's quickshell all along.
     #
     # git.outfoxxed.me, not the GitHub mirror, because that is where the rev
-    # was locked from and re-pointing it would relock to a different node for
-    # the same commit. nixpkgs' tagged quickshell is 0.3.0 and is NOT a
-    # substitute: these dots are verified against 0.3.1 only.
+    # was first locked from and re-pointing it would relock to a different
+    # node for the same commit. nixpkgs' tagged quickshell is 0.3.0 and is NOT
+    # a substitute.
     #
-    # Deliberately NOT the rev end-4's own sdata/dist-nix pins
-    # (7511545e, 2026-03-19). That is six months older than this, and the
-    # session has only ever been run on 0.3.1.
+    # 0.3.2 (4f508be5, 2026-10-08), the rev end-4's own PKGBUILD pins. Not
+    # 0.3.1 (0fed22a2) any more: that one segfaulted in Qt Quick's teardown
+    # whenever the shell reloaded itself (crash report of 2026-10-26, from the
+    # sidebar's reload button). It deleted the QML engine before the root's
+    # children, and Loaders and Repeaters reach for the engine from their
+    # destructors; 0.3.2 destroys the engine after them (4594680). Even so
+    # the reload buttons restart the process instead (../home/ii-session/
+    # shell-restart.nix), so the session does not depend on reload at all.
     quickshell = {
-      url = "git+https://git.outfoxxed.me/outfoxxed/quickshell?ref=refs/heads/master&rev=0fed22a2c47d9568ddf13cf61586b3f2ac4378a2";
+      url = "git+https://git.outfoxxed.me/outfoxxed/quickshell?ref=refs/heads/master&rev=4f508be500dea6e5732cc3d50382a0048b17e7b1";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
