@@ -5,6 +5,7 @@
     ./shell.nix
     ./git.nix
     ./starship.nix
+    ./fastfetch.nix
     ./kitty.nix
     ./micro.nix
     ./mime.nix

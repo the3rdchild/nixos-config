@@ -95,6 +95,8 @@
     libreoffice-qt6-still
     zip # Flutter prerequisite on Linux
     ugs # Universal Gcode Sender, CNC/GRBL controller
+    freecad # parametric mechanical CAD; its CAM workbench feeds G-code to ugs
+    solvespace # light parametric CAD for quick parts and mechanisms
   ];
 
   # LibreOffice picks its VCL backend from XDG_CURRENT_DESKTOP, and that is
