@@ -86,6 +86,7 @@
     mission-center
     zip # Flutter prerequisite on Linux
     ugs # Universal Gcode Sender, CNC/GRBL controller
+    qbittorrent
   ];
 
   # LibreOffice picks its VCL backend from XDG_CURRENT_DESKTOP, and that is
