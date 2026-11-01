@@ -68,6 +68,7 @@
   osk = import ./osk.nix args;
   # cursorShake = import ./cursor-shake.nix args;
   shellWarnings = import ./shell-warnings.nix args;
+  portalRestart = import ./portal-restart.nix args;
   restart = import ./shell-restart.nix args;
   ai = import ./ai.nix args;
 
@@ -88,6 +89,7 @@
       osk
       # cursorShake
       shellWarnings
+      portalRestart
       restart
       ai
     ];
