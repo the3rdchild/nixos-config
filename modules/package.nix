@@ -79,24 +79,13 @@
     bun
     pnpm
     uv
-    dbeaver-bin
     nmap
     picocom
     screen
     openssl
     mission-center
-    # The qt6 build, not plain libreoffice-still: that one ships only
-    # libvclplug_genlo.so and libvclplug_gtk3lo.so, so LibreOffice rendered as
-    # a GTK3 app and never looked at kdeglobals. This variant adds
-    # libvclplug_kf6lo.so, which reads the same Breeze colour scheme
-    # ../home/qt.nix keeps in step with the session mode — so LibreOffice
-    # follows dark/light through the machinery that is already there, rather
-    # than through the GTK stack.
-    libreoffice-qt6-still
     zip # Flutter prerequisite on Linux
     ugs # Universal Gcode Sender, CNC/GRBL controller
-    freecad # parametric mechanical CAD; its CAM workbench feeds G-code to ugs
-    solvespace # light parametric CAD for quick parts and mechanisms
   ];
 
   # LibreOffice picks its VCL backend from XDG_CURRENT_DESKTOP, and that is
