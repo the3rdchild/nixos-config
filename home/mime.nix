@@ -4,6 +4,16 @@ let
   micro = "micro-kitty.desktop";
   ark = "org.kde.ark.desktop";
 
+  # The plain 7zip package strips the RAR codec (unRAR licence), so listing
+  # works but extraction doesn't. _7zz-rar keeps it, which is why it needs
+  # allowUnfree. It installs `7zz` only; Ark's cli7z plugin may look for `7z`,
+  # so the alias is there to be found either way.
+  sevenZip = pkgs.symlinkJoin {
+    name = "7zz-rar-with-7z-alias";
+    paths = [ pkgs._7zz-rar ];
+    postBuild = "ln -s 7zz $out/bin/7z";
+  };
+
   assoc = app: types: lib.genAttrs types (_: [ app ]);
 in
 {
@@ -23,7 +33,14 @@ in
     </Menu>
   '';
 
-  home.packages = [ pkgs.kdePackages.ark ];
+  # Ark has no RAR support of its own ("No suitable plugin found"): its rar
+  # plugin wants rar/unrar, its cli7z plugin wants a 7z binary on PATH. Ark's
+  # own Dolphin menu entries (Extract/Compress) only list the formats it can
+  # handle, so RAR shows up there once sevenZip is installed.
+  home.packages = [
+    pkgs.kdePackages.ark
+    sevenZip
+  ];
 
   # micro has no .desktop file of its own; run it inside kitty.
   xdg.desktopEntries.micro-kitty = {
@@ -80,6 +97,35 @@ in
         Name=Open in Local Web Player
         Icon=multimedia-player
         Exec=${open} %f
+      '';
+  };
+
+  # Dolphin right-click on a .rar/.7z → "Extract here with 7-Zip", into a
+  # folder named after the archive. Independent of Ark, so it still works if
+  # Ark's plugin lookup ever misses the binary. -aou renames instead of
+  # overwriting when the folder already holds a file of the same name.
+  xdg.dataFile."kio/servicemenus/extract-with-7zip.desktop" = {
+    executable = true;
+    text =
+      let
+        extract = pkgs.writeShellScript "extract-with-7zip" ''
+          for f in "$@"; do
+            ${sevenZip}/bin/7zz x -aou -o"''${f%.*}" -- "$f" ||
+              ${pkgs.libnotify}/bin/notify-send -i dialog-error "7-Zip" "Failed to extract $(basename "$f")"
+          done
+        '';
+      in
+      ''
+        [Desktop Entry]
+        Type=Service
+        MimeType=application/vnd.rar;application/x-rar;application/x-7z-compressed;
+        Actions=extractWith7zip;
+        X-KDE-Priority=TopLevel
+
+        [Desktop Action extractWith7zip]
+        Name=Extract here with 7-Zip
+        Icon=archive-extract
+        Exec=${extract} %F
       '';
   };
 
