@@ -55,6 +55,7 @@
     # A font in this list would be advertised through
     # ~/.config/fontconfig/conf.d/10-hm-fonts.conf, which the session's
     # alternate config root never reads.
+    traceroute
   ];
 
   fonts.fontconfig.enable = true;
