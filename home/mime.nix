@@ -6,8 +6,9 @@ let
 
   # The plain 7zip package strips the RAR codec (unRAR licence), so listing
   # works but extraction doesn't. _7zz-rar keeps it, which is why it needs
-  # allowUnfree. It installs `7zz` only; Ark's cli7z plugin may look for `7z`,
-  # so the alias is there to be found either way.
+  # allowUnfree. It installs `7zz` only, and Ark's cli7z plugin looks for a
+  # binary named exactly `7z` (no `7zz` in its strings), so without the alias
+  # Ark still says "No suitable plugin found".
   sevenZip = pkgs.symlinkJoin {
     name = "7zz-rar-with-7z-alias";
     paths = [ pkgs._7zz-rar ];
@@ -101,17 +102,56 @@ in
   };
 
   # Dolphin right-click on a .rar/.7z → "Extract here with 7-Zip", into a
-  # folder named after the archive. Independent of Ark, so it still works if
-  # Ark's plugin lookup ever misses the binary. -aou renames instead of
-  # overwriting when the folder already holds a file of the same name.
+  # folder named after the archive (" (2)", " (3)"… if that exists). Independent
+  # of Ark, so it still works if Ark's plugin lookup ever misses the binary.
+  # Encrypted archives get a kdialog password prompt, repeated until it is
+  # right or cancelled. 7zz asks "Enter password:" on stdin when none is given
+  # and errors "Wrong password" when it is bad; both are matched below.
   xdg.dataFile."kio/servicemenus/extract-with-7zip.desktop" = {
     executable = true;
     text =
       let
         extract = pkgs.writeShellScript "extract-with-7zip" ''
+          sz=${sevenZip}/bin/7zz
+          ask=${pkgs.kdePackages.kdialog}/bin/kdialog
+          notify=${pkgs.libnotify}/bin/notify-send
+
           for f in "$@"; do
-            ${sevenZip}/bin/7zz x -aou -o"''${f%.*}" -- "$f" ||
-              ${pkgs.libnotify}/bin/notify-send -i dialog-error "7-Zip" "Failed to extract $(basename "$f")"
+            name=$(basename "$f")
+            # Extract into a scratch dir beside the archive and rename it on
+            # success, so a wrong password never leaves half-written files in
+            # the real destination. mktemp makes it 0700; give it back the
+            # umask-default mode it would have had.
+            tmp=$(mktemp -d "$(dirname "$f")/.extract-XXXXXX") || {
+              $notify -i dialog-error 7-Zip "Cannot write next to $name"
+              continue
+            }
+            chmod "$(printf '%03o' $((0777 & ~$(umask))))" "$tmp"
+
+            pw=""
+            prompt="Password for $name:"
+            while :; do
+              # The password goes in on stdin, not -p, so it never shows in ps.
+              if out=$(printf '%s\n' "$pw" | $sz x -y -o"$tmp" -- "$f" 2>&1); then
+                dest="''${f%.*}"
+                n=2
+                while [ -e "$dest" ]; do
+                  dest="''${f%.*} ($n)"
+                  n=$((n + 1))
+                done
+                mv -- "$tmp" "$dest"
+                break
+              fi
+              find "$tmp" -mindepth 1 -delete
+              if printf '%s' "$out" | grep -qE 'Enter password|Wrong password'; then
+                pw=$($ask --title 7-Zip --password "$prompt") || { rmdir "$tmp"; break; }
+                prompt="Wrong password for $name. Try again:"
+              else
+                $notify -i dialog-error 7-Zip "Failed to extract $name"
+                rmdir "$tmp"
+                break
+              fi
+            done
           done
         '';
       in
