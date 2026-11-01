@@ -20,6 +20,7 @@
 #
 # execs.lua only runs when Hyprland starts. To get it in a running session:
 #   ii-cursor-shake Bibata-Modern-Classic 24 & disown
+
 { pkgs, ... }: rec {
   cursorTheme = "Bibata-Modern-Classic";
   cursorSize = 24;
