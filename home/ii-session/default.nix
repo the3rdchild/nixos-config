@@ -65,6 +65,7 @@
   video = import ./video-wallpaper.nix args;
   barIslands = import ./bar-islands.nix args;
   clipboard = import ./clipboard.nix args;
+  osk = import ./osk.nix args;
   restart = import ./shell-restart.nix args;
   ai = import ./ai.nix args;
 
@@ -82,6 +83,7 @@
       video
       barIslands
       clipboard
+      osk
       restart
       ai
     ];
