@@ -9,6 +9,7 @@
     ./kitty.nix
     ./micro.nix
     ./mime.nix
+    ./wine.nix
     ./zen.nix
     ./ii-session
     ./themes.nix
