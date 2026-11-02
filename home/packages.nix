@@ -56,6 +56,7 @@
     # ~/.config/fontconfig/conf.d/10-hm-fonts.conf, which the session's
     # alternate config root never reads.
     traceroute
+    freecad
   ];
 
   fonts.fontconfig.enable = true;
