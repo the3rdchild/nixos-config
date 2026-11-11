@@ -42,11 +42,52 @@
   # ../../modules/ii-session.nix, exported as NIXPKGS_QT6_QML_IMPORT_PATH — see
   # the comment there for why the session variable rather than a second
   # wrapper.
+  #
+  # ── The window-reference patch.
+  #
+  # Opening the end4-pC settings (SUPER+I) crashed the shell with a SIGSEGV in
+  # QQuickItemPrivate::addToDirtyList, preceded by a burst of "Cannot use same
+  # item on different windows". The core dumps show one Rectangle under the
+  # settings pages' Loader still pointing at a QQuickWindow Quickshell had
+  # already deleted. A layershell PanelWindow is deleted on every hide and
+  # recreated on every show, and Qt (QTBUG-152100) leaks a window reference
+  # on an inline ShaderEffectSource's sourceItem, so the stale pointer
+  # survives to the next show. Upstream: quickshell-mirror/quickshell#1376,
+  # fixed by #1442, which is not merged or released yet; the file here is its
+  # code half. Drop it, and the whole `patched` block, once a release has it.
+  #
+  # Only `unwrapped` takes the patch: the package the flake hands out is a
+  # wrapper that copies ${unwrapped} into its own $out, so overrideAttrs on
+  # the wrapper would patch nothing. That means rebuilding the wrapper around
+  # the patched build, which is what upstream's own `withModules` does with
+  # one more buildInput; calling withModules here would go back through the
+  # unpatched wrapper, so it is spelled out. The assert is the anchor: if an
+  # input bump changes how the wrapper installs, this fails the evaluation
+  # instead of quietly dropping the patch.
+  qsBase = inputs.quickshell.packages.${pkgs.stdenv.hostPlatform.system}.default.override {
+    withX11 = false;
+    withI3 = false;
+  };
+  qsUnwrapped = qsBase.unwrapped.overrideAttrs (old: {
+    patches = (old.patches or [ ]) ++ [ ./files/quickshell-release-window-refs.patch ];
+  });
   quickshell =
-    (inputs.quickshell.packages.${pkgs.stdenv.hostPlatform.system}.default.override {
-      withX11 = false;
-      withI3 = false;
-    }).withModules [ pkgs.qt6.qtimageformats ];
+    # Context is discarded for the check only: hasInfix is a regex match,
+    # which Nix refuses for a string that refers to a store path.
+    assert pkgs.lib.assertMsg
+      (pkgs.lib.hasInfix
+        (builtins.unsafeDiscardStringContext "${qsBase.unwrapped}")
+        (builtins.unsafeDiscardStringContext qsBase.installPhase))
+      "quickshell's wrapper no longer installs from `unwrapped`: re-check the patch wiring in home/ii-session/packages.nix";
+    (qsBase.overrideAttrs (old: {
+      installPhase = ''
+        mkdir -p $out
+        cp -r ${qsUnwrapped}/* $out
+      '';
+      # withModules is dropped on purpose: it closes over the unpatched wrapper.
+      passthru = removeAttrs old.passthru [ "withModules" ] // { unwrapped = qsUnwrapped; };
+      buildInputs = old.buildInputs ++ [ pkgs.qt6.qtimageformats ];
+    }));
 in
   with pkgs; [
     # The shell runtime itself, see above.
