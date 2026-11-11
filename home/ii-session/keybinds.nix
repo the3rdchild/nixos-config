@@ -124,6 +124,23 @@
     hl.bind("SUPER + SHIFT + V", hl.dsp.exec_cmd("code"), { description = "App: VS Code" })
     hl.bind("SUPER + SHIFT + O", hl.dsp.exec_cmd("obsidian"), { description = "App: Obsidian" })
 
+    --# Sonora (local-web-player) transport, from anywhere: CTRL+ALT+ [ ] \
+    --# back / play-pause / next.
+    --#
+    --# `-p sonora` names Sonora's own MPRIS player (lib/mpris/mpris.js in that
+    --# project) instead of whichever player playerctl considers current. Zen
+    --# exposes a single MPRIS player for all its tabs, and a video tab (Miruro)
+    --# can hold it - a bare `playerctl previous` would then skip the anime, not
+    --# the song. Nothing happens when Sonora isn't on the bus (no tab with a
+    --# track loaded). The plain XF86Audio* media keys are untouched and keep
+    --# going to the most recently active player.
+    --#
+    --# Free on CTRL+ALT: upstream's bracket/backslash binds all sit on SUPER
+    --# or SUPER+CTRL (keybinds.lua:163, :299).
+    hl.bind("CTRL + ALT + BracketLeft", hl.dsp.exec_cmd("playerctl -p sonora previous"), { description = "Sonora: Previous track" })
+    hl.bind("CTRL + ALT + BracketRight", hl.dsp.exec_cmd("playerctl -p sonora play-pause"), { description = "Sonora: Play/pause" })
+    hl.bind("CTRL + ALT + Backslash", hl.dsp.exec_cmd("playerctl -p sonora next"), { description = "Sonora: Next track" })
+
     --# Close every window one by one while held; letting go of any key stops it
     local closeSeqToken = nil
     local function closeSeqStop()
