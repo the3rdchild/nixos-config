@@ -104,6 +104,31 @@
     # nothing here touches them.
     [ "$(grep -c 'quickshell:sidebarLeftToggle"' $out/.config/hypr/hyprland/keybinds.lua)" = "3" ] || exit 1
 
+    # ── SUPER+A and SUPER+C are unbound; SUPER+P opens nwg-displays.
+    #
+    # SUPER+A was one of the left sidebar's three keys (+B and +O remain);
+    # SUPER+C was "App: Code editor"; SUPER+P was "Window: Pin", now replaced
+    # by the display settings arranger (nwg-displays, from ../packages.nix).
+    # SUPER+ALT+A (detached sidebar), SUPER+SHIFT+A and SUPER+SHIFT+C are
+    # different chords and are untouched. Each anchor is checked before and
+    # after so an upstream rewording fails the build.
+    for anchor in \
+      'hl.bind("SUPER + A", hl.dsp.global("quickshell:sidebarLeftToggle"),' \
+      'hl.bind("SUPER + C", hl.dsp.exec_cmd(codeEditor),' \
+      'hl.bind("SUPER + P", hl.dsp.window.pin(),'; do
+      [ "$(grep -cF "$anchor" $out/.config/hypr/hyprland/keybinds.lua)" = "1" ] || { echo "missing anchor: $anchor" >&2; exit 1; }
+    done
+    sed -i '/^hl.bind("SUPER + A", hl.dsp.global("quickshell:sidebarLeftToggle"),/d' \
+      $out/.config/hypr/hyprland/keybinds.lua
+    sed -i '/^hl.bind("SUPER + C", hl.dsp.exec_cmd(codeEditor),/d' \
+      $out/.config/hypr/hyprland/keybinds.lua
+    sed -i 's|^hl.bind("SUPER + P", hl.dsp.window.pin(), { description = "Window: Pin" })$|hl.bind("SUPER + P", hl.dsp.exec_cmd("nwg-displays"), { description = "App: Display settings" })|' \
+      $out/.config/hypr/hyprland/keybinds.lua
+    [ "$(grep -c '"SUPER + A"' $out/.config/hypr/hyprland/keybinds.lua)" = "0" ] || exit 1
+    [ "$(grep -c '"SUPER + C"' $out/.config/hypr/hyprland/keybinds.lua)" = "0" ] || exit 1
+    [ "$(grep -c 'hl.bind("SUPER + P", hl.dsp.exec_cmd("nwg-displays")' $out/.config/hypr/hyprland/keybinds.lua)" = "1" ] || exit 1
+    [ "$(grep -c 'quickshell:sidebarLeftToggle"' $out/.config/hypr/hyprland/keybinds.lua)" = "2" ] || exit 1
+
     # ── New binds: apps on SUPER+SHIFT+Z/V/O, and SUPER+SHIFT+Q held.
     #
     # Appended rather than substituted: these replace nothing, and

@@ -61,6 +61,7 @@
   keybinds = import ./keybinds.nix args;
   capture = import ./capture.nix args;
   display = import ./display-power.nix args;
+  outputHeal = import ./output-heal.nix args;
   lightDark = import ./light-dark.nix (args // { inherit (video) videoFrame; });
   video = import ./video-wallpaper.nix args;
   barIslands = import ./bar-islands.nix args;
@@ -82,6 +83,7 @@
       keybinds
       capture
       display
+      outputHeal
       lightDark
       video
       barIslands
