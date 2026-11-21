@@ -41,6 +41,8 @@ export interface Dgpu {
   present: boolean;
   /** PCI runtime power state: "active", "suspended", "suspending"… */
   state?: string | null;
+  /** The runtime power policy: "on" keeps the card awake, "auto" lets it sleep. */
+  control?: string | null;
   name?: string;
   usage?: number;
   mem_used?: number;

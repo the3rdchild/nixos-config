@@ -1,5 +1,7 @@
 import { Meter, CoreStrip } from "./Meter";
 import { Sparkline } from "./Sparkline";
+import { Segmented } from "./Segmented";
+import type { GpuMode } from "../api";
 import { fmtBytes, fmtPct, fmtWatts, type Metrics } from "../metrics";
 
 // CPU, both GPUs, memory and where the watts go.
@@ -16,9 +18,11 @@ export interface SystemCardProps {
   /** CPU usage history, 0–100, oldest first. */
   cpuHistory: number[];
   accent: string;
+  /** Sets the dGPU's runtime power policy; the switch is hidden without it. */
+  onGpuMode?: (mode: GpuMode) => void;
 }
 
-export function SystemCard({ metrics, cpuHistory, accent }: SystemCardProps) {
+export function SystemCard({ metrics, cpuHistory, accent, onGpuMode }: SystemCardProps) {
   const cpu = metrics?.cpu;
   const mem = metrics?.mem;
   const igpu = metrics?.igpu;
@@ -77,34 +81,50 @@ export function SystemCard({ metrics, cpuHistory, accent }: SystemCardProps) {
       ) : null}
 
       {dgpu?.present ? (
-        asleep ? (
-          <Meter
-            label="dGPU"
-            value={null}
-            readout="asleep"
-            muted
-            sub="Left suspended on purpose — querying it would wake the card."
-            accent={accent}
-          />
-        ) : (
-          <Meter
-            label={dgpu.name ? dgpu.name.replace(/^NVIDIA\s+/, "") : "dGPU"}
-            value={dgpu.usage ?? null}
-            readout={fmtPct(dgpu.usage)}
-            sub={
-              [
-                dgpu.mem_total
-                  ? `${fmtBytes(dgpu.mem_used)} / ${fmtBytes(dgpu.mem_total)}`
-                  : null,
-                dgpu.temp != null ? `${dgpu.temp.toFixed(0)} °C` : null,
-                dgpu.watts != null ? fmtWatts(dgpu.watts) : null,
-              ]
-                .filter(Boolean)
-                .join(" · ") || undefined
-            }
-            accent={accent}
-          />
-        )
+        <>
+          {asleep ? (
+            <Meter
+              label="dGPU"
+              value={null}
+              readout="asleep"
+              muted
+              sub="Left suspended on purpose — querying it would wake the card."
+              accent={accent}
+            />
+          ) : (
+            <Meter
+              label={dgpu.name ? dgpu.name.replace(/^NVIDIA\s+/, "") : "dGPU"}
+              value={dgpu.usage ?? null}
+              readout={fmtPct(dgpu.usage)}
+              sub={
+                [
+                  dgpu.mem_total
+                    ? `${fmtBytes(dgpu.mem_used)} / ${fmtBytes(dgpu.mem_total)}`
+                    : null,
+                  dgpu.temp != null ? `${dgpu.temp.toFixed(0)} °C` : null,
+                  dgpu.watts != null ? fmtWatts(dgpu.watts) : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ") || undefined
+              }
+              accent={accent}
+            />
+          )}
+          {onGpuMode && (dgpu.control === "on" || dgpu.control === "auto") ? (
+            <div className="dgpu-switch">
+              <Segmented<GpuMode>
+                label="dGPU power"
+                accent={accent}
+                value={dgpu.control}
+                onChange={onGpuMode}
+                options={[
+                  { value: "auto", label: "Auto", sub: "sleeps when idle" },
+                  { value: "on", label: "Always on", sub: "stays awake, uses battery" },
+                ]}
+              />
+            </div>
+          ) : null}
+        </>
       ) : null}
 
       {mem ? (

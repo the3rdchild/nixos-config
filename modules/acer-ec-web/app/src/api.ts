@@ -60,6 +60,11 @@ export async function api<T>(path: string, body?: object): Promise<T> {
 
 export const getStatus = () => api<Status>("/api/status");
 
+/** The dGPU's runtime power policy: "on" keeps it awake, "auto" lets it sleep. */
+export type GpuMode = "on" | "auto";
+export const setGpuMode = (mode: GpuMode) =>
+  api<{ ok: boolean; dgpu_control: string | null }>("/api/gpu", { mode });
+
 /** "r g b" (sysfs multi_intensity) → "#rrggbb" for <input type=color>. */
 export function toHex(c: string): string {
   return (

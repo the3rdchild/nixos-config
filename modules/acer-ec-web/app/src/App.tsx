@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, getStatus, toHex, type Effect, type Status } from "./api";
+import { api, getStatus, setGpuMode, toHex, type Effect, type GpuMode, type Status } from "./api";
 import { fmtDuration, getMetrics, type Metrics } from "./metrics";
 import { COOL_C, HOT_C, MODE_LABELS, clamp } from "./effects";
 import {
@@ -168,6 +168,21 @@ export default function App() {
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, [render, renderMetrics, fail]);
+
+  // The server answers with the value it read back from sysfs, so what the
+  // switch shows is what the card is set to, not what was asked for.
+  const onGpuMode = useCallback(
+    (mode: GpuMode) => {
+      setGpuMode(mode)
+        .then((r) =>
+          setMetrics((m) =>
+            m?.dgpu ? { ...m, dgpu: { ...m.dgpu, control: r.dgpu_control } } : m,
+          ),
+        )
+        .catch(fail);
+    },
+    [fail],
+  );
 
   const onFrame = useCallback((hex: string) => {
     const now = performance.now();
@@ -427,7 +442,12 @@ export default function App() {
           </div>
         </section>
 
-        <SystemCard metrics={metrics} cpuHistory={cpuHistory} accent={accent} />
+        <SystemCard
+          metrics={metrics}
+          cpuHistory={cpuHistory}
+          accent={accent}
+          onGpuMode={onGpuMode}
+        />
         <BatteryCard battery={bat} rateHistory={rateHistory} accent={accent} />
         <AppsCard apps={metrics?.apps} ready={!!metrics?.ready} accent={accent} />
       </div>

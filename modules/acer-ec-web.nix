@@ -43,11 +43,36 @@
 #     group-video read on the RAPL energy counters (see the udev rule at the
 #     bottom of this file), which is the difference between showing watts
 #     and showing an em dash.
+#   - The dGPU switch (POST /api/gpu) writes one attribute: the dGPU's PCI
+#     power/control, "on" or "auto". Group video gets write on that file only.
+#   - Every POST must come from this page: Host and Origin are checked and the
+#     body must be application/json (see ALLOWED_HOSTS in the server).
 { config, lib, pkgs, ... }:
 
 let
   # Bind address. 127.0.0.1 on purpose — see the security note above.
   port = 8077;
+
+  # What the NVIDIA dGPU's runtime power control is set to at boot. NixOS's
+  # own fine-grained power management writes "auto" every time the driver
+  # binds (see hardware.nvidia.powerManagement.finegrained in graphics.nix),
+  # which lets the card drop to D3cold whenever nothing uses it — the reason
+  # it is "off" after every boot. "on" keeps it awake from boot on (battery
+  # cost); "auto" is the NixOS behaviour. The panel's dGPU switch changes it
+  # at run time only; this is the value after a reboot.
+  dgpuBootMode = "on";
+
+  # "PCI:1:0:0" (decimal bus:device:function, as hardware.nvidia.prime wants
+  # it) -> "0000:01:00.0" (the lowercase hex address sysfs uses). null when
+  # no NVIDIA bus id is configured, which turns every dGPU rule below off.
+  dgpuAddress =
+    let
+      id = config.hardware.nvidia.prime.nvidiaBusId or "";
+      parts = lib.splitString ":" (lib.removePrefix "PCI:" id);
+      hex = n: lib.fixedWidthString 2 "0" (lib.toLower (lib.toHexString (lib.toInt n)));
+    in
+    if id == "" || builtins.length parts != 3 then null
+    else "0000:${hex (builtins.elemAt parts 0)}:${hex (builtins.elemAt parts 1)}.${builtins.elemAt parts 2}";
 
   # nvidia-smi, as a store path, or the Python literal None on a machine
   # with no NVIDIA driver. The service runs as a DynamicUser with no PATH
@@ -98,6 +123,15 @@ let
     from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
     PORT = ${toString port}
+
+    # POSTs are accepted only from this page itself. Without this, any web
+    # page open in the same browser could reach http://localhost:8077/api/...:
+    # a cross-site POST with a text/plain body is a "simple" request, so the
+    # browser sends it without asking, and json.loads below does not care what
+    # the Content-Type said. A DNS name rebound to 127.0.0.1 could do the same
+    # with a Host header of its own.
+    ALLOWED_HOSTS = ("localhost:" + str(PORT), "127.0.0.1:" + str(PORT))
+    ALLOWED_ORIGINS = tuple("http://" + h for h in ALLOWED_HOSTS)
     LED = "/sys/class/leds/acer_ec::kbd_backlight"
     FAN = "/sys/kernel/acer_fanctl"
 
@@ -679,15 +713,22 @@ let
             "watts": None,  # filled from the RAPL uncore domain below
         }
 
+    def dgpu_dir():
+        # The PCI device the nvidia driver is bound to, or None.
+        for d in sorted(glob.glob(NVIDIA_PCI + "/0000:*")):
+            return d
+        return None
+
     def dgpu_state():
         # Runtime power state straight from the PCI device, and the gate on
         # everything else here. This is a PRIME-offload laptop: the discrete
         # GPU spends its life in D3cold, and *asking* nvidia-smi anything
         # resumes it. A panel that polled unconditionally would hold a card
         # awake for the sake of telling you how much it draws while awake.
-        for d in sorted(glob.glob(NVIDIA_PCI + "/0000:*")):
-            return read(d + "/power/runtime_status") or "unknown"
-        return None
+        d = dgpu_dir()
+        if d is None:
+            return None
+        return read(d + "/power/runtime_status") or "unknown"
 
     def smi(args, timeout=6.0):
         try:
@@ -712,6 +753,10 @@ let
             return out
         state = dgpu_state()
         out["state"] = state
+        # The power *policy*: "on" keeps the card awake, "auto" lets it sleep
+        # when nothing uses it. Plain sysfs, so reading it never wakes the card.
+        d = dgpu_dir()
+        out["control"] = read(d + "/power/control") if d else None
         if state != "active":
             return out  # asleep, and deliberately left that way
         txt = smi(["--query-gpu=" + GPU_FIELDS, "--format=csv,noheader,nounits"])
@@ -1018,7 +1063,23 @@ let
             else:
                 super().do_GET()
 
+        def post_problem(self):
+            # (status, message) when this request must not be acted on.
+            if (self.headers.get("Host") or "").lower() not in ALLOWED_HOSTS:
+                return 403, "unexpected Host header"
+            origin = self.headers.get("Origin")
+            if origin is not None and origin.lower() not in ALLOWED_ORIGINS:
+                return 403, "cross-site request refused"
+            ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+            if ctype != "application/json":
+                return 415, "send application/json"
+            return None
+
         def do_POST(self):
+            problem = self.post_problem()
+            if problem:
+                self.send_json(problem[0], {"error": problem[1]})
+                return
             try:
                 n = int(self.headers.get("Content-Length") or 0)
                 req = json.loads(self.rfile.read(n) or b"{}")
@@ -1026,7 +1087,7 @@ let
                 self.send_json(400, {"error": "invalid JSON"})
                 return
             try:
-                self.apply(self.path, req)
+                extra = self.apply(self.path, req) or {}
             except (ValueError, OSError) as e:
                 # A write may have partially landed before raising, so drop
                 # the cache on the error path too.
@@ -1034,7 +1095,7 @@ let
                 self.send_json(400, {"error": str(e)})
                 return
             invalidate_status()
-            self.send_json(200, dict({"ok": True}, **status()))
+            self.send_json(200, dict({"ok": True}, **extra, **status()))
 
         def apply(self, path, req):
             if path == "/api/kbd/effect":
@@ -1043,8 +1104,25 @@ let
                 self.set_kbd(req)
             elif path == "/api/fan":
                 self.set_fan(req)
+            elif path == "/api/gpu":
+                return self.set_gpu(req)
             else:
                 raise ValueError("not found")
+
+        def set_gpu(self, req):
+            # The dGPU's runtime power policy. "on" keeps it awake (D0) and
+            # costs battery; "auto" lets it fall back to D3cold when idle.
+            # Neither forces it off: a card with an open client stays awake.
+            # The write needs group-video access to this one attribute (udev
+            # and tmpfiles rules at the bottom of this file).
+            mode = req.get("mode") if isinstance(req, dict) else None
+            if mode not in ("on", "auto"):
+                raise ValueError("mode must be on or auto")
+            d = dgpu_dir()
+            if d is None:
+                raise ValueError("no NVIDIA GPU is bound to the driver")
+            write(d + "/power/control", mode)
+            return {"dgpu_control": read(d + "/power/control")}
 
         def set_kbd(self, req):
             with lock:
@@ -1134,15 +1212,64 @@ in
   # systemd-tmpfiles-setup has already run. The tmpfiles rules are the
   # belt-and-braces half: they cover the zones that already exist when a
   # nixos-rebuild switch installs this without a reboot.
+  #
+  # The dGPU's power/control is the one *writable* attribute added here, for
+  # the panel's dGPU switch: group video may flip it between "auto" and "on".
+  # That is all it can do (keep a card awake or let it sleep); it cannot reach
+  # clocks, limits or the driver. Same two halves as above: udev for the
+  # device appearing at boot, tmpfiles for the device that already exists when
+  # a switch installs this without a reboot.
   services.udev.extraRules = ''
     ACTION=="add", SUBSYSTEM=="powercap", KERNEL=="intel-rapl:*", \
       RUN+="${pkgs.coreutils}/bin/chgrp video /sys/class/powercap/%k/energy_uj", \
       RUN+="${pkgs.coreutils}/bin/chmod g+r /sys/class/powercap/%k/energy_uj"
+  '' + lib.optionalString (dgpuAddress != null) ''
+    ACTION=="add|change", SUBSYSTEM=="pci", KERNEL=="${dgpuAddress}", ATTR{vendor}=="0x10de", \
+      RUN+="${pkgs.coreutils}/bin/chgrp video /sys%p/power/control", \
+      RUN+="${pkgs.coreutils}/bin/chmod g+w /sys%p/power/control"
   '';
 
   systemd.tmpfiles.rules = [
     "z /sys/class/powercap/intel-rapl:*/energy_uj 0440 root video -"
-  ];
+  ] ++ lib.optional (dgpuAddress != null)
+    "z /sys/bus/pci/devices/${dgpuAddress}/power/control 0664 root video -";
+
+  # The boot default for the dGPU's power control (see dgpuBootMode). It has
+  # to run AFTER the driver binds, because NixOS's own udev rule writes "auto"
+  # at bind; so it waits for the bound device, lets udev finish, writes, and
+  # checks that the value stuck. Absent when the default is NixOS's "auto".
+  systemd.services.dgpu-power-default = lib.mkIf (dgpuBootMode == "on" && dgpuAddress != null) {
+    description = "Keep the NVIDIA dGPU awake from boot (default of the acer-ec-web dGPU switch)";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "systemd-modules-load.service" "systemd-udev-trigger.service" ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      TimeoutStartSec = 120;
+    };
+    script = ''
+      dev=/sys/bus/pci/drivers/nvidia/${dgpuAddress}
+      for _ in $(seq 1 60); do
+        [ -e "$dev/power/control" ] && break
+        sleep 1
+      done
+      if [ ! -e "$dev/power/control" ]; then
+        echo "nvidia driver is not bound to ${dgpuAddress}; leaving its power control alone"
+        exit 0
+      fi
+      ${pkgs.systemd}/bin/udevadm settle --timeout=30 || true
+      for _ in 1 2 3; do
+        echo on > "$dev/power/control"
+        sleep 1
+        if [ "$(cat "$dev/power/control")" = on ]; then
+          echo "dGPU power control: on"
+          exit 0
+        fi
+      done
+      echo "dGPU power control did not stay on" >&2
+      exit 1
+    '';
+  };
 
   systemd.services.acer-ec-web = {
     description = "acer-ec localhost web UI (keyboard backlight + fans)";

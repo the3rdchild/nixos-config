@@ -1050,3 +1050,8 @@ input[type="color"] {
     transition: none;
   }
 }
+
+/* The dGPU power switch sits directly under its meter. */
+.dgpu-switch {
+  margin: 0.5rem 0 1rem;
+}
