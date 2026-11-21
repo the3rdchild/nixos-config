@@ -110,6 +110,18 @@ pkgs.runCommand "illogical-impulse-nixos" { } ''
   end
   IIANIM
 
+  # Hyprland 0.57 caps decoration.shadow.render_power at 4 and rejects anything
+  # above it ("error setting 'decoration.shadow.render_power': value 10 is more
+  # than the maximum of 4", shown by `hyprctl configerrors`). Upstream's
+  # general.lua still says 10, which 0.56 accepted. 4 is the steepest falloff the
+  # new range allows, so it is the closest stand-in for the 10 that was meant.
+  # Drop this once upstream fixes the value (the grep below then fails the build
+  # on purpose, instead of silently patching nothing).
+  [ "$(grep -c '^ *render_power = 10,$' $out/.config/hypr/hyprland/general.lua)" = 1 ]
+  sed -i 's/^\( *\)render_power = 10,$/\1render_power = 4,/' \
+    $out/.config/hypr/hyprland/general.lua
+  grep -q '^ *render_power = 4,$' $out/.config/hypr/hyprland/general.lua
+
   # Bluetooth pairing agent. ../../modules/bluetooth.nix enables blueman, but
   # its applet is a D-Bus/systemd user unit nothing in this session starts,
   # and kded6 — whose bluedevil module is the other agent — is killed by
