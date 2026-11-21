@@ -34,7 +34,10 @@
       gtkmm3
       gtksourceviewmm
       gtksourceview3
-      cairomm
+      # `cairomm` was removed from nixpkgs; cairomm_1_0 is the same
+      # cairomm-1.14.5 the old attribute pointed at (the cairomm-1.0 API that
+      # gtkmm3 links against).
+      cairomm_1_0
       fontconfig
     ];
 

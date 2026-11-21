@@ -115,6 +115,7 @@
     ${scope "app-Hyprland-firefox-"} = browser;
     ${scope "app-Hyprland-microsoft\\x2dedge-"} = browser;
     ${scope "app-Hyprland-com.microsoft.Edge-"} = browser;
+    ${scope "app-Hyprland-edge\\x2dnvidia-"} = browser; # graphics.nix: the NVIDIA launcher
     ${scope "app-Hyprland-code-"} = editor;
 
     # Self-created by Electron/Chromium (main process).
@@ -125,6 +126,7 @@
     ${service "app-firefox@"} = browserSvc;
     ${service "app-microsoft\\x2dedge@"} = browserSvc;
     ${service "app-com.microsoft.Edge@"} = browserSvc;
+    ${service "app-edge\\x2dnvidia@"} = browserSvc;
     ${service "app-code@"} = editorSvc;
   };
 }

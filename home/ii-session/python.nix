@@ -26,8 +26,10 @@
       tqdm
       loguru
       click
-      # Invoked as a command by matugen/templates/kde/*-wrapper.sh.
-      kde-material-you-colors
+      # kde-material-you-colors is NOT here any more: it left python3Packages
+      # and is now the top-level application pkgs.kde-material-you-colors
+      # (same 2.2.0). It is only ever run as a command, so the venv links its
+      # bin/ in below instead of importing it.
       # Used by services/gCloud/token-from-key-venv.sh.
       google-auth
       requests
@@ -44,6 +46,11 @@ in rec {
   venv = pkgs.runCommand "illogical-impulse-venv" { } ''
     mkdir -p $out/bin
     ln -s ${pythonEnv}/bin/* $out/bin/
+    # Invoked as a command by matugen/templates/kde/*-wrapper.sh. It moved out
+    # of python3Packages into a top-level application, so it is no longer in
+    # pythonEnv — link its executables into the same bin/ the wrappers reach
+    # through bin/activate.
+    ln -s ${pkgs.kde-material-you-colors}/bin/* $out/bin/
 
     # Sourced, never executed — so no shebang, and it must be valid in both
     # bash and sh. Mirrors what a real venv's activate does, minus the prompt

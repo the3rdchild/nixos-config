@@ -9,6 +9,15 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
+    # The nixpkgs of 2026-07-23 (e2587cae), kept for exactly ONE package:
+    # simple-mtpfs, which modules/mtp.nix mounts the phone with. It was removed
+    # from nixpkgs (jmtpfs and mtpfs went too; go-mtpfs has a different CLI)
+    # by the 2026-11 bump. Pinning it from here keeps behaviour identical and
+    # costs no download — the store path was already in the system closure.
+    # Nothing else may read from this input. OWNER DECISION still open: port
+    # mtp.nix to another client (go-mtpfs / aft-mtp-mount) and drop this pin.
+    nixpkgs-old.url = "github:nixos/nixpkgs/e2587caef70cea85dd97d7daab492899902dbf5d";
+
     # No acer-ec input: the driver tree is in-repo at
     # Reference/acer-aspire-A715-79G/acer-ec and modules/acer-ec.nix reaches it
     # by relative path. See the comment there.

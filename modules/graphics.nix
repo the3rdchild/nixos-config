@@ -1,4 +1,51 @@
 { config, pkgs, ... }:
+let
+  # Microsoft Edge on the NVIDIA dGPU, as an opt-in second launcher. The normal
+  # Edge is untouched, so the two can be compared side by side.
+  #
+  # Measured with headless Edge 150 on this laptop (WebGL renderer string):
+  #   no flags                      SwiftShader (software; headless uses no GPU)
+  #   --use-gl=angle --use-angle=gl Intel (Mesa ADL GT2)
+  #   ... plus the offload variables  NVIDIA GeForce RTX 3050   (5 of 5 runs)
+  #   --use-angle=vulkan            WebGL does not start at all
+  # so the variables alone do nothing and the flags alone pick Intel: it takes
+  # both. WebGPU had no adapter in any variant. This is the headless GL path;
+  # the Wayland window path of a normal, visible Edge was not tested.
+  #
+  # Chromium forwards a second launch to the Edge that is already running, and
+  # that process keeps its own GPU choice, so by default this uses a profile of
+  # its own (log in again; settings and extensions are separate) and always
+  # starts its own process. `edge-nvidia --main-profile` uses the normal profile
+  # instead and refuses while any Edge is running, rather than silently
+  # opening a window on the wrong GPU.
+  edgeNvidia = pkgs.writeShellScriptBin "edge-nvidia" ''
+    export __NV_PRIME_RENDER_OFFLOAD=1
+    export __NV_PRIME_RENDER_OFFLOAD_PROVIDER=NVIDIA-G0
+    export __GLX_VENDOR_LIBRARY_NAME=nvidia
+    export __VK_LAYER_NV_optimus=NVIDIA_only
+
+    if [ "''${1:-}" = "--main-profile" ]; then
+      shift
+      if ${pkgs.procps}/bin/pgrep -u "$(id -u)" -x msedge > /dev/null; then
+        echo "edge-nvidia: Edge is already running; a new window would join that process and use its GPU. Close Edge first." >&2
+        exit 1
+      fi
+    else
+      set -- --user-data-dir="''${XDG_CONFIG_HOME:-$HOME/.config}/microsoft-edge-nvidia" "$@"
+    fi
+    exec ${pkgs.microsoft-edge}/bin/microsoft-edge --use-gl=angle --use-angle=gl "$@"
+  '';
+
+  edgeNvidiaDesktop = pkgs.makeDesktopItem {
+    name = "edge-nvidia";
+    desktopName = "Microsoft Edge (NVIDIA)";
+    genericName = "Web Browser";
+    comment = "Edge rendering on the NVIDIA GPU (own profile)";
+    exec = "edge-nvidia %U";
+    icon = "microsoft-edge";
+    categories = [ "Network" "WebBrowser" ];
+  };
+in
 {
   # ── Hybrid graphics: Intel UHD (Alder Lake-P, PCI:0:2:0)
   #                  + NVIDIA RTX 3050 6GB Laptop / GA107 (PCI:1:0:0)
@@ -96,5 +143,8 @@
     # .nvidia, not .full — .full pulls the entire CUDA stack (~3 GB of
     # libcublas) for AMD/other backends this machine has no use for.
     nvtopPackages.nvidia
+
+    edgeNvidia
+    edgeNvidiaDesktop
   ];
 }

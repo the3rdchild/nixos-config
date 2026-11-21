@@ -51,10 +51,16 @@
 #     second session holder, skip.
 #   * programs.adb.enable — rock-solid `adb push/pull` on Xiaomi; add if
 #     CLI transfers become the norm.
-{ config, pkgs, lib, ... }:
+{ config, pkgs, lib, inputs, ... }:
 let
   mountpoint = "/mnt/phone";
   owner = "noouoops"; # uid 1000 — matches the fusermount ownership rule
+
+  # simple-mtpfs no longer exists in nixpkgs (removed in the 2026-11 bump), so
+  # it is taken from the flake's `nixpkgs-old` pin (the 2026-07-23 nixpkgs) —
+  # the very same store path the system already carried. See flake.nix.
+  simple-mtpfs =
+    inputs.nixpkgs-old.legacyPackages.${pkgs.stdenv.hostPlatform.system}.simple-mtpfs;
 
   # Flap-tolerant MTP mounter. simple-mtpfs self-daemonizes on success, so
   # the oneshot service exits while the FUSE daemon keeps holding the
@@ -81,7 +87,7 @@ let
     while [ "$i" -lt "$tries" ]; do
       i=$((i + 1))
       echo "mtp-automount: attempt $i/$tries"
-      if ${pkgs.simple-mtpfs}/bin/simple-mtpfs ${mountpoint}; then
+      if ${simple-mtpfs}/bin/simple-mtpfs ${mountpoint}; then
         entries=$($timeout 8 $ls ${mountpoint} 2>/dev/null || true)
         if [ -n "$entries" ]; then
           echo "mtp-automount: mounted ${mountpoint} (attempt $i)"
@@ -157,7 +163,7 @@ in
   # automount is unused here on purpose — one session holder only.
   services.gvfs.enable = true;
 
-  environment.systemPackages = with pkgs; [
+  environment.systemPackages = [
     simple-mtpfs # manual reads / --list-devices (WRITE path fails on the
                  # POCO X3 NFC — see header for the gvfs write procedure)
   ];
